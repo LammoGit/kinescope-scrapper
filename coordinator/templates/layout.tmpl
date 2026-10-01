@@ -1,0 +1,53 @@
+{{define "head"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Discovery · Coordinator</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="/static/js/app.js" defer></script>
+</head>
+<body>
+<nav class="nav">
+  <a class="nav-brand" href="/">📹 <span>Video&nbsp;Discovery</span></a>
+  <ul class="nav-links">
+    <li><a href="/"        data-nav="dashboard">Dashboard</a></li>
+    <li><a href="/jobs"    data-nav="jobs">Jobs</a></li>
+    <li><a href="/workers" data-nav="workers">Servers</a></li>
+  </ul>
+  <div class="nav-user">
+    <span id="user-name" class="user-name">—</span>
+    <button id="logout-btn" class="btn btn-ghost" type="button">Logout</button>
+  </div>
+</nav>
+<main class="container">
+{{end}}
+
+{{define "foot"}}
+</main>
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+</body>
+</html>
+{{end}}
+
+{{define "auth_head"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Discovery · Sign in</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="/static/js/app.js" defer></script>
+</head>
+<body class="auth-body">
+<main class="auth-container">
+{{end}}
+
+{{define "auth_foot"}}
+</main>
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+</body>
+</html>
+{{end}}

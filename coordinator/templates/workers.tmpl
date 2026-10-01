@@ -1,0 +1,18 @@
+{{template "head" .}}
+
+<section class="page-header">
+  <div>
+    <h1>Servers</h1>
+    <p class="muted">Agents connected to the coordinator (auto-refresh every 3s)</p>
+  </div>
+  <div class="header-controls">
+    <button id="workers-refresh" class="btn" type="button">Refresh now</button>
+  </div>
+</section>
+
+<div id="workers-list" class="workers-grid">
+  <div class="muted">Loading…</div>
+</div>
+
+<script src="/static/js/workers.js" defer></script>
+{{template "foot" .}}

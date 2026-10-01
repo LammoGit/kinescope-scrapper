@@ -1,0 +1,37 @@
+{{template "auth_head" .}}
+<div class="auth-card">
+  <div class="auth-logo">📹</div>
+  <h1>Video Discovery</h1>
+  <p class="muted">Sign in to the coordinator</p>
+
+  <form id="login-form" class="form" autocomplete="on">
+    <label class="field">
+      <span>Username</span>
+      <input name="username" type="text" required autocomplete="username">
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input name="password" type="password" required autocomplete="current-password">
+    </label>
+    <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+  </form>
+
+  <p class="muted small">No account? <a href="/register">Create one</a></p>
+</div>
+<script>
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await api('/api/auth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(Object.fromEntries(fd)),
+      });
+      window.location.href = '/';
+    } catch (err) {
+      toast(err.message || 'Login failed', 'error');
+    }
+  });
+</script>
+{{template "auth_foot" .}}

@@ -1,0 +1,105 @@
+{{template "head" .}}
+
+<section class="page-header">
+  <div>
+    <h1>Create job</h1>
+    <p class="muted">Configure range, limits and workers</p>
+  </div>
+  <a href="/jobs" class="btn">Cancel</a>
+</section>
+
+<form id="job-form" class="form-layout" autocomplete="off">
+
+  <section class="card">
+    <h2>Range</h2>
+    <p class="muted small">
+      Accepted inputs: <code>[A,B]</code>, <code>A</code>, <code>[A, ]</code>, empty (infinite from 0),
+      or <code>--from A --to B</code>. Leave <em>To</em> blank for infinite range.
+    </p>
+    <div class="grid grid-2">
+      <label class="field">
+        <span>From</span>
+        <input name="range_from" type="number" min="0" value="0">
+      </label>
+      <label class="field">
+        <span>To (optional)</span>
+        <input name="range_to" type="number" min="0" placeholder="open">
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>HTTP & retries</h2>
+    <div class="grid grid-3">
+      <label class="field">
+        <span>Request timeout (s)</span>
+        <input name="request_timeout_seconds" type="number" min="1" value="20">
+      </label>
+      <label class="field">
+        <span>Max retries</span>
+        <input name="max_retries" type="number" min="0" value="4">
+      </label>
+      <label class="field">
+        <span>Block size (ids)</span>
+        <input name="block_size" type="number" min="1" value="5000">
+      </label>
+      <label class="field">
+        <span>Global rate limit (rps)</span>
+        <input name="global_rate_limit_rps" type="number" min="1" value="20">
+      </label>
+      <label class="field">
+        <span>Stop after consecutive missing (optional)</span>
+        <input name="stop_on_consecutive_missing" type="number" min="0" placeholder="disabled">
+      </label>
+      <label class="field">
+        <span>Default threads (global)</span>
+        <input name="threads" type="number" min="1" value="8">
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Servers</h2>
+      <button type="button" class="btn" id="add-server-btn">+ Add server</button>
+    </div>
+    <div id="servers-container" class="servers-container"></div>
+  </section>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create job</button>
+    <a href="/jobs" class="btn">Cancel</a>
+  </div>
+</form>
+
+<template id="server-row-template">
+  <div class="server-row card">
+    <div class="server-row-head">
+      <strong class="server-row-title">Server</strong>
+      <button type="button" class="btn btn-ghost remove-server-btn">Remove</button>
+    </div>
+    <div class="grid grid-3">
+      <label class="field"><span>Name</span>      <input name="name"     type="text" required></label>
+      <label class="field"><span>Host</span>      <input name="host"     type="text" required></label>
+      <label class="field"><span>SSH port</span>  <input name="ssh_port" type="number" min="1" max="65535" value="22"></label>
+      <label class="field"><span>SSH user</span>  <input name="ssh_user" type="text" required></label>
+      <label class="field"><span>SSH key path</span> <input name="ssh_key" type="text" placeholder="/run/secrets/key"></label>
+      <label class="field"><span>Auth</span>
+        <select name="ssh_auth">
+          <option value="key">key</option>
+          <option value="password">password</option>
+          <option value="agent">agent</option>
+        </select>
+      </label>
+      <label class="field"><span>Storage path</span>
+        <input name="storage_path" type="text" required placeholder="/data/videos"></label>
+      <label class="field"><span>Threads</span>
+        <input name="threads" type="number" min="1" placeholder="(global)"></label>
+      <label class="field"><span>Min free space (GB)</span>
+        <input name="min_free_space_gb" type="number" min="0" value="20"></label>
+    </div>
+  </div>
+</template>
+
+<script src="/static/js/create_job.js" defer></script>
+{{template "foot" .}}

@@ -1,0 +1,96 @@
+{{template "head" .}}
+
+<section class="page-header">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="muted">Live progress of the selected job</p>
+  </div>
+  <div class="header-controls">
+    <select id="job-select" class="select" aria-label="Select job"></select>
+    <div class="btn-group" role="group">
+      <button id="btn-start"  class="btn btn-primary" type="button">Start</button>
+      <button id="btn-pause"  class="btn"             type="button">Pause</button>
+      <button id="btn-resume" class="btn"             type="button">Resume</button>
+      <button id="btn-stop"   class="btn btn-danger"  type="button">Stop</button>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2 id="job-title">No job selected</h2>
+      <p class="muted small" id="job-range">—</p>
+    </div>
+    <span id="job-status" class="badge">idle</span>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress">
+      <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+    </div>
+    <div class="progress-meta">
+      <span id="progress-text">0 / 0</span>
+      <span id="progress-pct" class="muted">0%</span>
+    </div>
+  </div>
+</section>
+
+<section class="grid grid-4">
+  <div class="stat-card">
+    <div class="stat-label">Processed IDs</div>
+    <div class="stat-value" id="stat-processed">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Found materials</div>
+    <div class="stat-value text-info" id="stat-found">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Downloaded files</div>
+    <div class="stat-value text-success" id="stat-downloaded">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Errors</div>
+    <div class="stat-value text-danger" id="stat-errors">0</div>
+  </div>
+</section>
+
+<section class="grid grid-4">
+  <div class="stat-card">
+    <div class="stat-label">Check rate (cur / avg)</div>
+    <div class="stat-value" id="speed-process">0 / 0 <span class="unit">id/s</span></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Download rate (cur / avg)</div>
+    <div class="stat-value" id="speed-download">0 / 0 <span class="unit">B/s</span></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Total downloaded</div>
+    <div class="stat-value" id="total-data">0 B</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">ETA (finite range)</div>
+    <div class="stat-value" id="eta">—</div>
+  </div>
+</section>
+
+<section class="grid grid-2">
+  <div class="stat-card">
+    <div class="stat-label">Active servers</div>
+    <div class="stat-value" id="active-servers">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Active threads</div>
+    <div class="stat-value" id="active-threads">0</div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Recent events</h2>
+  <div id="events-list" class="event-list">
+    <div class="muted small">No events yet.</div>
+  </div>
+</section>
+
+<script src="/static/js/dashboard.js" defer></script>
+{{template "foot" .}}

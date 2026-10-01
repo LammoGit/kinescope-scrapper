@@ -1,0 +1,44 @@
+{{template "auth_head" .}}
+<div class="auth-card">
+  <div class="auth-logo">📹</div>
+  <h1>Create account</h1>
+  <p class="muted">Default role: <code>viewer</code> (admin can promote)</p>
+
+  <form id="register-form" class="form" autocomplete="on">
+    <label class="field">
+      <span>Username</span>
+      <input name="username" type="text" required minlength="3">
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input name="password" type="password" required minlength="8">
+    </label>
+    <label class="field">
+      <span>Confirm password</span>
+      <input name="confirm" type="password" required minlength="8">
+    </label>
+    <button class="btn btn-primary btn-block" type="submit">Create account</button>
+  </form>
+
+  <p class="muted small">Already registered? <a href="/login">Sign in</a></p>
+</div>
+<script>
+  document.getElementById('register-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target));
+    if (fd.password !== fd.confirm) return toast('Passwords do not match', 'error');
+    delete fd.confirm;
+    try {
+      await api('/api/auth/register', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(fd),
+      });
+      toast('Account created', 'success');
+      setTimeout(() => window.location.href = '/login', 600);
+    } catch (err) {
+      toast(err.message || 'Registration failed', 'error');
+    }
+  });
+</script>
+{{template "auth_foot" .}}
