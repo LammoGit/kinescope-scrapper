@@ -3,7 +3,7 @@ package main
 import (
 	"coordinator/internal/api"
 	"coordinator/internal/api/stream"
-	jd "coordinator/internal/job-distributor"
+	jdist "coordinator/internal/job-distributor"
 	st "coordinator/internal/storage"
 	"coordinator/internal/ui"
 	"flag"
@@ -19,6 +19,7 @@ var (
 	configPath = flag.String("config", "./config.yaml", "Path to the YAML config file")
 )
 
+// Config type used for parsing and storing config
 type Config struct {
 	Job struct {
 		Range struct {
@@ -41,12 +42,14 @@ func validateFlags() error {
 	return nil
 }
 
-var jobDistributor = jd.New()
-var storage = &st.Servers{
+// Global variables for storing and intercating with jobs and workers
+var jd = jdist.New()
+var servers = &st.Servers{
 	Servers: make(map[string]*st.Server),
 }
 
 func main() {
+	// Parse and validate the flags
 	flag.Parse()
 	if err := validateFlags(); err != nil {
 		fmt.Println(err)
@@ -68,9 +71,8 @@ func main() {
 		return
 	}
 
+	// Create a new router and assign it the Recovery middleware
 	router := gin.New()
-
-	// Middleware
 	router.Use(gin.Recovery())
 
 	// Create SSE hub
@@ -81,7 +83,7 @@ func main() {
 	router.Static("/static", "./static")
 
 	// Load routes
-	api.LoadRouter(router.Group("/api"), hub, storage)
+	api.LoadRouter(router.Group("/api"), hub, jd, servers)
 	ui.LoadRouter(router.Group("/"))
 
 	// Run server on the given port
