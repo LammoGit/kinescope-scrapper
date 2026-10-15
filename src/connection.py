@@ -1,6 +1,5 @@
 import requests
 import time
-import paramiko
 from options import Options
 
 class SiteConnection:

@@ -1,8 +1,7 @@
-from dataclasses import dataclass
+from pydantic import Model
 from typing import Optional
 
-@dataclass
-class Options:
+class Options(Model):
     range_start: int = 0
     range_end: Optional[int] = None
     base_url: str = "https://kinescope.io"

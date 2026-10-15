@@ -7,7 +7,7 @@ def parser_interval(value: str):
     s = value.strip().replace(" ", "")
     if s.isdigit():
         return (0, int(s))
-    if s.startwith('[') and s.endwith(']'):
+    if s.startswith('[') and s.endswith(']'):
         args = s[1:-1].split(',')
         if len(args) == 2:
             start, end = args[0], args[1]
