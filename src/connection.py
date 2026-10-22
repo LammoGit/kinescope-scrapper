@@ -68,7 +68,7 @@ class SiteConnection:
                     downloaded += len(chunk)
                 if total:
                     print(
-                        f"\r[{self.options.agent_name} status]: downloading {downloaded / total:.1%}", end="",
+                        f"\r[{self.options.agent_name} status]: downloading {downloaded / total:.1%}",
+                        end="",
                     )
             print(f"[{self.options.agent_name} status]: done")
-            )
