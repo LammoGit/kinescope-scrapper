@@ -16,12 +16,16 @@ def main():
             m3u8_url = re.search("embedUrl.*", result[0]).group()
             if m3u8_url:
                 m3u8_url = m3u8_url[12:-1] + "/media.m3u8"
+            else:
+                print(
+                    f"[{options.agent_name} status]: not_found for {options.base_url}"
+                )
         else:
             m3u8_url = m3u8_url[14:-14] + "/media.m3u8"
         if not m3u8_url:
             print(f"[{options.agent_name} status]: not_found for {options.base_url}")
         else:
-            quality_check_list = []
+            print(f"[{options.agent_name} status]: found for {options.base_url}")
             catalog = options.base_url[-22:] + "/"
             for quality in ["480", "720", "1080"]:
                 video_url = m3u8_url + "?quality=" + quality + "&type=video"
