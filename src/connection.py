@@ -7,6 +7,10 @@ from pathlib import Path
 class SiteConnection:
     def __init__(self, options):
         self.options = options
+        self.video_count = 0
+
+    def get_count(self):
+        return self.video_count
 
     def _create_session(self):
         session = requests.Session()
@@ -19,14 +23,14 @@ class SiteConnection:
         session = self._create_session()
         for attempt in range(self.options.retries + 1):
             try:
-                response = session.get(url, timeout=self.options.timeout)
+                response = session.get(url, timeout=(15, self.options.timeout))
                 if response.status_code == 200:
                     return (
                         response.text,
                         f"[{self.options.agent_name} status]: checking for {url}",
                     )
                 if response.status_code == 429:
-                    time.sleep(self.options.timeout)
+                    time.sleep(15)
                     if attempt > self.options.retries:
                         return (
                             None,
@@ -53,8 +57,21 @@ class SiteConnection:
                     f"[{self.options.agent_name} status]: failed - request fail for {url}",
                 )
 
+    def download_metadata(self, catalog, name, description):
+        storage_path = Path(self.options.storage_path + catalog)
+        storage_path.mkdir(parents=True, exist_ok=True)
+        file_path = storage_path / "metadata.json"
+        with file_path.open("w", encoding="utf-8") as f:
+            f.write("{\n")
+            f.write(name + ",\n")
+            f.write(description + "\n")
+            f.write("}")
+        print(
+            f"\r[{self.options.agent_name} status]: {file_path} downloaded successfuly"
+        )
+
     def download_media(self, url, catalog, filename):
-        result = requests.get(url, stream=True, timeout=self.options.timeout)
+        result = requests.get(url, stream=True, timeout=(15, self.options.timeout))
         result.raise_for_status()
         total = int(result.headers.get("Content-Length", 0))
         downloaded = 0
@@ -71,4 +88,6 @@ class SiteConnection:
                         f"\r[{self.options.agent_name} status]: downloading {file_path} {downloaded / total:.1%}",
                         end="",
                     )
-            print(f"\n[{self.options.agent_name} status]: done")
+            print(
+                f"\n[{self.options.agent_name} status]: {catalog + '/' + filename} downloaded successfuly"
+            )

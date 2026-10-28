@@ -9,5 +9,5 @@ class Options(BaseModel):
     base_url: str = "https://kinescope.io"
     storage_path: str = "../downloads/"
     threads: int = 4
-    timeout: float = 35.0
+    timeout: float = 120
     retries: int = 3
