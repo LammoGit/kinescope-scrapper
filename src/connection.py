@@ -10,6 +10,8 @@ class SiteConnection:
         self.video_count = 0
 
     def get_count(self):
+        catalog = Path(self.options.storage_path)
+        self.video_count = sum(1 for path in catalog.iterdir() if path.is_dir())
         return self.video_count
 
     def _create_session(self):

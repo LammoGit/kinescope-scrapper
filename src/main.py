@@ -2,6 +2,7 @@ from cli import CommandLineParser, CommandLineInterface
 from connection import SiteConnection
 from options import Options
 from parser import KinescopeParser
+from itertools import count
 import threading
 import time
 
@@ -43,9 +44,15 @@ def console_loop(interface, parser, connection, options):
                 interface.menu(options, connection.get_count())
             case "2":
                 interface.start(options.agent_name)
-                for i in range(options.range_start, options.range_end):
-                    url = options.base_url + "/" + str(i)
-                    get_video(parser, options, connection, url)
+                if options.range_end is not None:
+                    for i in range(options.range_start, options.range_end):
+                        url = options.base_url + "/" + str(i)
+                        get_video(parser, options, connection, url)
+                else:
+                    it = count(options.range_start)
+                    for i in it:
+                        url = options.base_url + "/" + str(i)
+                        get_video(parser, options, connection, url)
                 print("Waiting for Enter to continue...")
                 input()
                 interface.menu(options, connection.get_count())
