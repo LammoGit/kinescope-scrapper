@@ -1,0 +1,3464 @@
+openapi: '3.2.0'
+servers:
+  - url: https://scrappy.ai
+info:
+  version: '1.0.0'
+  title: 'Coordinator API'
+  description: Manage jobs and workers for scraping Kinescope.
+paths:
+  # --- JOBS ---
+  /api/jobs:
+    get:
+      operationId: GetJobs
+      summary: Get a list of all jobs
+      tags:
+        - jobs
+      security: []
+      responses:
+        '200':
+          description: List of all jobs.
+          content:
+            application/json:
+              schema:
+                description: The list of jobs.
+                type: array
+                items:
+                  $ref: '#/components/schemas/Job'
+              examples:
+                empty:
+                  summary: No jobs yet
+                  value: []
+                someJobs:
+                  summary: A couple of jobs
+                  value:
+                    - id: 100
+                      name: Scrape batch #1
+                      status: running
+                      job:
+                        range:
+                          from: 1
+                          to: 1000
+                        request_timeout_seconds: 30
+                        max_retries: 3
+                        global_rate_limit_rps: 10
+                        stop_on_consecutive_missing: 5
+                      servers:
+                        id: 1
+                        name: worker-1
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    post:
+      operationId: CreateJob
+      summary: Creates a new job
+      tags:
+        - jobs
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Configuration of the job to create.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreate'
+            examples:
+              basic:
+                summary: Simple job creation
+                value:
+                  name: Scrape batch #2
+                  job:
+                    range:
+                      from: 1
+                      to: 1000
+                    request_timeout_seconds: 30
+                    max_retries: 3
+                    global_rate_limit_rps: 10
+                    stop_on_consecutive_missing: 5
+      responses:
+        '201':
+          description: Created a new job.
+          headers:
+            Location:
+              description: The URL of the newly created job.
+              schema:
+                type: string
+                format: uri
+              example: "https://scrappy.ai/api/jobs/100"
+          content:
+            application/json:
+              schema:
+                description: The newly created job.
+                $ref: '#/components/schemas/Job'
+              examples:
+                created:
+                  summary: The freshly created job
+                  value:
+                    id: 100
+                    name: Scrape batch #2
+                    status: created
+                    job:
+                      range:
+                        from: 1
+                        to: 1000
+                      request_timeout_seconds: 30
+                      max_retries: 3
+                      global_rate_limit_rps: 10
+                      stop_on_consecutive_missing: 5
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badRequest:
+                  summary: Malformed body
+                  value:
+                    error: "'name' is a required property"
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    get:
+      operationId: GetJob
+      summary: Get a job corresponding to the provided `jobId`
+      tags:
+        - jobs
+      security: []
+      responses:
+        '200':
+          description: Job corresponding to the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+              examples:
+                job:
+                  summary: A single job
+                  value:
+                    id: 100
+                    name: Scrape batch
+                    status: running
+                    job:
+                      range:
+                        from: 1
+                        to: 1000
+                      request_timeout_seconds: 30
+                      max_retries: 3
+                      global_rate_limit_rps: 10
+                      stop_on_consecutive_missing: 5
+                    servers:
+                      id: 1
+                      name: worker-1
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    patch:
+      operationId: EditJob
+      summary: Edit a job corresponding to the provided `jobId`
+      tags:
+        - jobs
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Job configuration.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobUpdate'
+            examples:
+              rename:
+                summary: Rename a job
+                value:
+                  name: Renamed batch
+              changeRange:
+                summary: Change job range
+                value:
+                  job:
+                    range:
+                      from: 1
+                      to: 5000
+      responses:
+        '200':
+          description: Job after successful update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+              examples:
+                updated:
+                  summary: Updated job
+                  value:
+                    id: 100
+                    name: Renamed batch
+                    status: running
+                    job:
+                      range:
+                        from: 1
+                        to: 5000
+                      request_timeout_seconds: 30
+                      max_retries: 3
+                      global_rate_limit_rps: 10
+                      stop_on_consecutive_missing: 5
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    delete:
+      operationId: DeleteJob
+      summary: Delete a job corresponding to the provided `jobId`
+      tags:
+        - jobs
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Successfully deleted the job.
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}/start:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    post:
+      operationId: StartJob
+      summary: Start a job
+      tags:
+        - jobs
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Job is successfully started.
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}/pause:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    post:
+      operationId: PauseJob
+      summary: Pause a job
+      tags:
+        - jobs
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Job is successfully paused.
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}/resume:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    post:
+      operationId: ResumeJob
+      summary: Resume a job
+      tags:
+        - jobs
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Job is successfully resumed.
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}/stop:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    post:
+      operationId: StopJob
+      summary: Stop a job
+      tags:
+        - jobs
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Job is successfully stopped.
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}/items:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    get:
+      operationId: GetItems
+      summary: Get a list of identifiers of downloaded videos for the job
+      tags:
+        - jobs
+      security: []
+      responses:
+        '200':
+          description: The list of identifiers of videos downloaded for the job.
+          content:
+            application/json:
+              schema:
+                description: The list of identifiers.
+                type: array
+                items:
+                  description: A video identifier.
+                  type: integer
+                  format: int64
+              examples:
+                someItems:
+                  summary: Some downloaded video identifiers
+                  value: [42, 43, 44, 100]
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/jobs/{jobId}/events:
+    parameters:
+      - name: jobId
+        description: The unique identifier of the job.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/JobId'
+    get:
+      operationId: GetEvents
+      summary: Get a list of events for a job
+      tags:
+        - jobs
+      security: []
+      responses:
+        '200':
+          description: The list of events for a job.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobEvent'
+              examples:
+                events:
+                  summary: Some job events
+                  value:
+                    - job created
+                    - job started
+                    - job paused
+        '404':
+          description: No job found for the provided `jobId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Job not found
+                  value:
+                    error: Job 100 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  # --- WORKERS ---
+  /api/workers/register:
+    post:
+      operationId: RegisterWorker
+      summary: Register a new worker
+      tags:
+        - workers
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Info needed to register the worker.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerRegister'
+            examples:
+              register:
+                summary: Register a new worker
+                value:
+                  ssh_host: 192.168.1.10
+                  ssh_port: 22
+      responses:
+        '201':
+          description: Worker is successfully registered.
+          headers:
+            Location:
+              description: The URL of the newly created worker.
+              schema:
+                type: string
+                format: uri
+              example: "https://scrappy.ai/api/workers/1"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Worker'
+              examples:
+                created:
+                  summary: The freshly registered worker
+                  value:
+                    id: 1
+                    name: worker-1
+                    host: 192.168.1.10
+                    ssh_port: 22
+                    ssh_user: root
+                    threads: 8
+                    storage_path: /data/videos
+                    min_free_space_gb: 50
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}/heartbeat:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    post:
+      operationId: SendHeartbeat
+      summary: Send a heartbeat message to prolong worker-coordinator connection
+      tags:
+        - workers
+        - user_role_operator
+      security:
+        - HttpMessageSignature: []
+      requestBody:
+        description: Optional current metrics of the worker.
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerMetrics'
+            examples:
+              minimal:
+                summary: Heartbeat with metrics
+                value:
+                  cpu_load: 45.2
+                  memory_load: 60.5
+                  disk_load: 30.0
+                  network_load: 20.5
+                  free_space_bytes: 1073741824
+                  n_opened_files: 100
+                  n_active_connections: 10
+                  worker_uptime: 3600
+                  identifiers_per_second: 5.5
+                  n_requests: 1000
+                  n_found_materials: 800
+                  n_active_downloads: 5
+                  n_bytes_per_second: 1048576
+                  avg_check_speed: 0.5
+                  avg_download_speed: 2.5
+                  download_queue_size: 100
+                  n_repeated_attempts: 10
+                  n_final_errors: 2
+                  oldest_in_queue: 120
+      responses:
+        '200':
+          description: Metrics of the worker corresponding to the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerMetrics'
+              examples:
+                metrics:
+                  summary: Current metrics
+                  value:
+                    cpu_load: 45.2
+                    memory_load: 60.5
+                    disk_load: 30.0
+                    network_load: 20.5
+                    free_space_bytes: 1073741824
+                    n_opened_files: 100
+                    n_active_connections: 10
+                    worker_uptime: 3600
+                    identifiers_per_second: 5.5
+                    n_requests: 1000
+                    n_found_materials: 800
+                    n_active_downloads: 5
+                    n_bytes_per_second: 1048576
+                    avg_check_speed: 0.5
+                    avg_download_speed: 2.5
+                    download_queue_size: 100
+                    n_repeated_attempts: 10
+                    n_final_errors: 2
+                    oldest_in_queue: 120
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}/lease:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker requesting a job lease.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    post:
+      operationId: LeaseJobRange
+      summary: Lease an available job from the queue
+      description: >
+        Workers call this endpoint to declare themselves idle and available for work. 
+        If a job is ready in the coordinator's queue, it is returned immediately. 
+        If no jobs are available, the coordinator holds this connection open until a job 
+        is submitted or the internal timeout is reached.
+      tags:
+        - workers
+        - signed
+      security:
+        - HttpMessageSignature: []
+      parameters:
+        - name: timeout
+          in: query
+          required: false
+          description: >
+            Optional maximum time (in seconds) the coordinator should hold the connection open 
+            before timing out.
+          schema:
+            type: integer
+            format: int32
+            default: 30
+            maximum: 45
+          example: 30
+      requestBody:
+        description: Optional current metrics or state of the worker to assist with job scheduling.
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerMetrics'
+            examples:
+              idle:
+                summary: Worker reporting idle state
+                value:
+                  cpu_load: 5.0
+                  memory_load: 20.0
+                  disk_load: 5.0
+                  network_load: 1.0
+                  free_space_bytes: 10737418240
+                  n_opened_files: 5
+                  n_active_connections: 0
+                  worker_uptime: 7200
+                  identifiers_per_second: 0.0
+                  n_requests: 0
+                  n_found_materials: 0
+                  n_active_downloads: 0
+                  n_bytes_per_second: 0.0
+                  avg_check_speed: 0.0
+                  avg_download_speed: 0.0
+                  download_queue_size: 0
+                  n_repeated_attempts: 0
+                  n_final_errors: 0
+                  oldest_in_queue: 0
+      responses:
+        '200':
+          description: A job was successfully leased to the worker.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobRange'
+              examples:
+                leased:
+                  summary: A leased job range
+                  value:
+                    id: 1
+                    job_id: 100
+                    range_start: 1
+                    range_end: 1000
+                    next_id: 1
+                    status: running
+                    leased_by: 1
+                    lease_expires_at: 1700000060
+                    attempt: 0
+                    created_at: 1700000000
+                    updated_at: 1700000000
+        '204':
+          description: >
+            Timeout reached. No jobs became available during the long-poll window. 
+            The worker should immediately issue a new lease request.
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}/progress:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    post:
+      operationId: SendProgress
+      summary: Update metrics of a worker
+      tags:
+        - workers
+        - signed
+      security:
+        - HttpMessageSignature: []
+      requestBody:
+        description: New worker's metrics.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerMetrics'
+            examples:
+              progress:
+                summary: Progress update
+                value:
+                  cpu_load: 50.0
+                  memory_load: 55.0
+                  disk_load: 40.0
+                  network_load: 30.0
+                  free_space_bytes: 1000000000
+                  n_opened_files: 80
+                  n_active_connections: 8
+                  worker_uptime: 4000
+                  identifiers_per_second: 4.5
+                  n_requests: 800
+                  n_found_materials: 700
+                  n_active_downloads: 4
+                  n_bytes_per_second: 900000
+                  avg_check_speed: 0.4
+                  avg_download_speed: 2.0
+                  download_queue_size: 80
+                  n_repeated_attempts: 8
+                  n_final_errors: 1
+                  oldest_in_queue: 100
+      responses:
+        '200':
+          description: Metrics are successfully received and updated.
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}/complete:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    post:
+      operationId: SendCompletion
+      summary: Notify coordinator about worker completing a job
+      tags:
+        - workers
+        - signed
+      security:
+        - HttpMessageSignature: []
+      requestBody:
+        description: Optional worker's metrics to set after completion.
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerMetrics'
+            examples:
+              complete:
+                summary: Post-completion metrics
+                value:
+                  cpu_load: 10.0
+                  memory_load: 25.0
+                  disk_load: 10.0
+                  network_load: 2.0
+                  free_space_bytes: 2000000000
+                  n_opened_files: 10
+                  n_active_connections: 1
+                  worker_uptime: 5000
+                  identifiers_per_second: 0.0
+                  n_requests: 0
+                  n_found_materials: 0
+                  n_active_downloads: 0
+                  n_bytes_per_second: 0.0
+                  avg_check_speed: 0.0
+                  avg_download_speed: 0.0
+                  download_queue_size: 0
+                  n_repeated_attempts: 0
+                  n_final_errors: 0
+                  oldest_in_queue: 0
+      responses:
+        '200':
+          description: >
+            Worker is successfully marked as complete.
+            Metrics are successfully received and updated if sent.
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}/fail:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    post:
+      operationId: SendFailure
+      summary: Notify a coordinator about a failed link
+      tags:
+        - workers
+        - signed
+      security:
+        - HttpMessageSignature: []
+      requestBody:
+        description: Optional worker's metrics to set after fail.
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerMetrics'
+            examples:
+              fail:
+                summary: Post-failure metrics
+                value:
+                  cpu_load: 15.0
+                  memory_load: 30.0
+                  disk_load: 12.0
+                  network_load: 3.0
+                  free_space_bytes: 1900000000
+                  n_opened_files: 15
+                  n_active_connections: 2
+                  worker_uptime: 5100
+                  identifiers_per_second: 0.0
+                  n_requests: 0
+                  n_found_materials: 0
+                  n_active_downloads: 0
+                  n_bytes_per_second: 0.0
+                  avg_check_speed: 0.0
+                  avg_download_speed: 0.0
+                  download_queue_size: 0
+                  n_repeated_attempts: 0
+                  n_final_errors: 1
+                  oldest_in_queue: 0
+      responses:
+        '200':
+          description: >
+            Worker is successfully marked as failed.
+            Metrics are successfully received and updated if sent.
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers:
+    get:
+      operationId: GetWorkers
+      summary: Get a list of all workers' info
+      tags:
+        - workers
+      security: []
+      responses:
+        '200':
+          description: Info of all workers in a list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Worker'
+              examples:
+                empty:
+                  summary: No workers
+                  value: []
+                someWorkers:
+                  summary: A couple of workers
+                  value:
+                    - id: 1
+                      name: worker-1
+                      host: 192.168.1.10
+                      ssh_port: 22
+                      ssh_user: root
+                      threads: 8
+                      storage_path: /data/videos
+                      min_free_space_gb: 50
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    get:
+      operationId: GetWorker
+      summary: Get the workers' info
+      tags:
+        - workers
+      security: []
+      responses:
+        '200':
+          description: Info of the worker corresponding to the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Worker'
+              examples:
+                worker:
+                  summary: A single worker
+                  value:
+                    id: 1
+                    name: worker-1
+                    host: 192.168.1.10
+                    ssh_port: 22
+                    ssh_user: root
+                    threads: 8
+                    storage_path: /data/videos
+                    min_free_space_gb: 50
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    patch:
+      operationId: EditWorker
+      summary: Edit the worker's config
+      tags:
+        - workers
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: New worker's info with values of which to replace previous ones.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerUpdate'
+            examples:
+              rename:
+                summary: Rename a worker
+                value:
+                  name: worker-renamed
+              tune:
+                summary: Tune worker resources
+                value:
+                  threads: 16
+                  min_free_space_gb: 100
+      responses:
+        '200':
+          description: Worker after successful update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Worker'
+              examples:
+                updated:
+                  summary: Updated worker
+                  value:
+                    id: 1
+                    name: worker-renamed
+                    host: 192.168.1.10
+                    ssh_port: 22
+                    ssh_user: root
+                    threads: 16
+                    storage_path: /data/videos
+                    min_free_space_gb: 100
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    delete:
+      operationId: DeleteWorker
+      summary: Delete a worker corresponding to the provided `workerId`
+      tags:
+        - workers
+        - user_role_operator
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Successfully deleted the worker.
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/workers/{workerId}/metrics:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+    get:
+      operationId: GetWorkerMetrics
+      summary: Get the worker's metrics
+      tags:
+        - workers
+      security: []
+      responses:
+        '200':
+          description: Metrics of the worker corresponding to the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerMetrics'
+              examples:
+                metrics:
+                  summary: Current metrics
+                  value:
+                    cpu_load: 45.2
+                    memory_load: 60.5
+                    disk_load: 30.0
+                    network_load: 20.5
+                    free_space_bytes: 1073741824
+                    n_opened_files: 100
+                    n_active_connections: 10
+                    worker_uptime: 3600
+                    identifiers_per_second: 5.5
+                    n_requests: 1000
+                    n_found_materials: 800
+                    n_active_downloads: 5
+                    n_bytes_per_second: 1048576
+                    avg_check_speed: 0.5
+                    avg_download_speed: 2.5
+                    download_queue_size: 100
+                    n_repeated_attempts: 10
+                    n_final_errors: 2
+                    oldest_in_queue: 120
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    error: Worker 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  # SSH Tunneling
+  /api/ssh/{workerId}:
+    get:
+      operationId: SSHTunneling
+      summary: Establish a WebSocket connection
+      description: This endpoint upgrades the HTTP connection to a WebSocket stream for interactive SSH access.
+      tags:
+        - websocket
+        - user_role_administrator
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workerId
+          in: path
+          required: true
+          description: The unique identifier of the worker.
+          schema:
+            $ref: '#/components/schemas/WorkerId'
+        - name: Upgrade
+          in: header
+          required: true
+          schema:
+            type: string
+            const: "websocket"
+          example: websocket
+        - name: Connection
+          in: header
+          required: true
+          schema:
+            type: string
+            const: "Upgrade"
+          example: Upgrade
+      responses:
+        '101':
+          description: Switching Protocols to WebSocket.
+
+  # SSE Streaming
+  /api/stream/jobs/metrics:
+    get:
+      operationId: SSEJobsMetrics
+      summary: An SSE stream of jobs' metrics
+      tags:
+        - sse
+      security: []
+      parameters:
+        - name: X-SSE-Subscribe-Jobs
+          in: header
+          required: false
+          style: simple
+          description: Comma-separated list consisting of job IDs and their ranges for which to listen.
+          explode: false
+          schema:
+            $ref: "#/components/schemas/SubscribeFilter"
+          example: "100-101,200,103"
+      responses:
+        '200':
+          description: Job metrics stream via SSE.
+          content:
+            text/event-stream:
+              itemSchema:
+                oneOf:
+                  - description: A telemetry report for a job with a corresponding id.
+                    type: object
+                    properties:
+                      id:
+                        description: Job's id.
+                        type: integer
+                        format: int64
+                      event:
+                        type: string
+                        const: "metrics update"
+                      data:
+                        $ref: '#/components/schemas/JobMetrics'
+                  - description: Just a comment used as a keep-alive message.
+                    type: string
+                    const: ":"
+              examples:
+                metricsUpdate:
+                  summary: A metrics update event
+                  value:
+                    id: 100
+                    event: metrics update
+                    data:
+                      cpu_load: 45.2
+                      memory_load: 60.5
+                      disk_load: 30.0
+                      network_load: 20.5
+                      free_space_bytes: 1073741824
+                      n_opened_files: 100
+                      n_active_connections: 10
+                      worker_uptime: 3600
+                      identifiers_per_second: 5.5
+                      n_requests: 1000
+                      n_found_materials: 800
+                      n_active_downloads: 5
+                      n_bytes_per_second: 1048576
+                      avg_check_speed: 0.5
+                      avg_download_speed: 2.5
+                      download_queue_size: 100
+                      n_repeated_attempts: 10
+                      n_final_errors: 2
+                      oldest_in_queue: 120
+                keepAlive:
+                  summary: Keep-alive comment
+                  value: ":"
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/stream/workers/metrics:
+    get:
+      operationId: SSEWorkersMetrics
+      summary: An SSE stream of workers' metrics
+      tags:
+        - sse
+      security: []
+      parameters:
+        - name: X-SSE-Subscribe-Workers
+          in: header
+          required: false
+          style: simple
+          description: Comma-separated list consisting of worker IDs and their ranges for which to listen.
+          explode: false
+          schema:
+            $ref: "#/components/schemas/SubscribeFilter"
+          example: "1-3,5"
+      responses:
+        '200':
+          description: Worker metrics stream via SSE.
+          content:
+            text/event-stream:
+              itemSchema:
+                type: object
+                properties:
+                  id:
+                    description: Worker's id.
+                    type: integer
+                    format: int64
+                  event:
+                    type: string
+                    const: "metrics update"
+                  data:
+                    $ref: '#/components/schemas/WorkerMetrics'
+              examples:
+                metricsUpdate:
+                  summary: A worker metrics update event
+                  value:
+                    id: 1
+                    event: metrics update
+                    data:
+                      cpu_load: 45.2
+                      memory_load: 60.5
+                      disk_load: 30.0
+                      network_load: 20.5
+                      free_space_bytes: 1073741824
+                      n_opened_files: 100
+                      n_active_connections: 10
+                      worker_uptime: 3600
+                      identifiers_per_second: 5.5
+                      n_requests: 1000
+                      n_found_materials: 800
+                      n_active_downloads: 5
+                      n_bytes_per_second: 1048576
+                      avg_check_speed: 0.5
+                      avg_download_speed: 2.5
+                      download_queue_size: 100
+                      n_repeated_attempts: 10
+                      n_final_errors: 2
+                      oldest_in_queue: 120
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  # --- Users ---
+  /api/user/register:
+    post:
+      operationId: RegisterUser
+      summary: Register a new user via HTML form
+      description: >
+        Accepts the registration form using `application/x-www-form-urlencoded`
+        encoding, matching the default `enctype` of an HTML `<form>` element.
+      tags:
+        - users
+      security: []
+      requestBody:
+        description: Registration form fields.
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserRegister'
+            encoding:
+              username:
+                style: form
+                explode: true
+              email:
+                style: form
+                explode: true
+              password:
+                style: form
+                explode: true
+            examples:
+              register:
+                summary: Example registration form
+                value:
+                  username: johndoe
+                  email: johndoe@example.com
+                  password: hunter2hunter2
+      responses:
+        '201':
+          description: User successfully registered.
+          headers:
+            Location:
+              description: The URL of the newly created user.
+              schema:
+                type: string
+                format: uri
+              example: "https://scrappy.ai/api/user/1"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                created:
+                  summary: The freshly registered user
+                  value:
+                    id: 1
+                    username: johndoe
+                    email: johndoe@example.com
+                    role: viewer
+                    created_at: 1700000000
+                    updated_at: 1700000000
+        '400':
+          description: Incorrect form data or username/email already taken.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                usernameTaken:
+                  summary: Username already taken
+                  value:
+                    error: Username 'johndoe' is already taken
+                validation:
+                  summary: Validation error
+                  value:
+                    error: Password must be at least 8 characters long
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/user/login:
+    post:
+      operationId: LoginUser
+      summary: Authenticate a user via HTML form and issue a token pair
+      description: >
+        Accepts the login form using `application/x-www-form-urlencoded`
+        encoding, matching the default `enctype` of an HTML `<form>` element.
+      tags:
+        - users
+      security: []
+      requestBody:
+        description: Login form fields.
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserLogin'
+            encoding:
+              email:
+                style: form
+                explode: true
+              password:
+                style: form
+                explode: true
+            examples:
+              login:
+                summary: Example login form
+                value:
+                  email: johndoe@example.com
+                  password: hunter2hunter2
+      responses:
+        '200':
+          description: Successfully logged in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+              examples:
+                tokens:
+                  summary: Issued token pair
+                  value:
+                    access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc
+                    refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
+                    token_type: Bearer
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badCredentials:
+                  summary: Wrong email or password
+                  value:
+                    error: Invalid email or password
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/user/refresh:
+    post:
+      operationId: RefreshToken
+      summary: Exchange a refresh token for a new token pair
+      description: >
+        Rotates the refresh token: the old refresh token is invalidated and a
+        fresh access/refresh pair is issued. Typically called from JavaScript,
+        so the body is JSON rather than a form.
+      tags:
+        - users
+      security: []
+      requestBody:
+        description: Refresh token to exchange for a new token pair.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+            examples:
+              refresh:
+                summary: Example refresh request
+                value:
+                  refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
+      responses:
+        '200':
+          description: New access/refresh token pair.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+              examples:
+                tokens:
+                  summary: Rotated token pair
+                  value:
+                    access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.ghi
+                    refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.jkl
+                    token_type: Bearer
+        '401':
+          description: Invalid, expired, or revoked refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid:
+                  summary: Refresh token invalid
+                  value:
+                    error: Refresh token is invalid or has expired
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/user/{userId}:
+    parameters:
+      - name: userId
+        description: The unique identifier of the user.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/UserId'
+    get:
+      operationId: GetUser
+      summary: Get the user corresponding to the provided `userId`
+      tags:
+        - users
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User corresponding to the provided `userId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                user:
+                  summary: A single user
+                  value:
+                    id: 1
+                    username: johndoe
+                    email: johndoe@example.com
+                    role: viewer
+                    created_at: 1700000000
+                    updated_at: 1700000000
+        '404':
+          description: No user found for the provided `userId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: User not found
+                  value:
+                    error: User 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    patch:
+      operationId: EditUser
+      summary: Edit the user corresponding to the provided `userId`
+      tags:
+        - users
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Fields to update on the user.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+            examples:
+              rename:
+                summary: Change username
+                value:
+                  username: john_doe
+              changeAvatar:
+                summary: Set a new avatar (base64)
+                value:
+                  avatar: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=
+      responses:
+        '200':
+          description: User after successful update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                updated:
+                  summary: Updated user
+                  value:
+                    id: 1
+                    username: john_doe
+                    email: johndoe@example.com
+                    role: viewer
+                    created_at: 1700000000
+                    updated_at: 1700000100
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                validation:
+                  summary: Validation error
+                  value:
+                    error: Username must be at least 3 characters long
+        '404':
+          description: No user found for the provided `userId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: User not found
+                  value:
+                    error: User 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    delete:
+      operationId: DeleteUser
+      summary: Delete the user corresponding to the provided `userId`
+      tags:
+        - users
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Successfully deleted the user.
+        '404':
+          description: No user found for the provided `userId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: User not found
+                  value:
+                    error: User 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  # --- Web Service ---
+  /api/service/search:
+    get:
+      operationId: SearchVideos
+      summary: Search videos by textual query
+      tags:
+        - service
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string.
+          schema:
+            type: string
+          example: python tutorial
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of results to return.
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            maximum: 100
+          example: 20
+        - name: offset
+          in: query
+          required: false
+          description: Number of results to skip.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+          example: 0
+      responses:
+        '200':
+          description: List of videos matching the query.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoList'
+              examples:
+                results:
+                  summary: A page of search results
+                  value:
+                    items:
+                      - id: 42
+                        title: Python tutorial part 1
+                        description: Getting started with Python
+                        duration_seconds: 120
+                        video_url: https://example.com/videos/42.mp4
+                        average_score: 8.5
+                        reactions_count: 100
+                        comments_count: 5
+                        created_at: 1700000000
+                    total: 1
+                    limit: 20
+                    offset: 0
+        '400':
+          description: Incorrect query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingQuery:
+                  summary: Missing `q`
+                  value:
+                    error: Query parameter 'q' is required
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/service/recommended:
+    get:
+      operationId: GetRecommendedVideos
+      summary: Get globally recommended videos
+      tags:
+        - service
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            maximum: 100
+          example: 20
+      responses:
+        '200':
+          description: List of recommended videos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoList'
+              examples:
+                results:
+                  summary: A page of recommended videos
+                  value:
+                    items:
+                      - id: 42
+                        title: Python tutorial part 1
+                        duration_seconds: 120
+                        video_url: https://example.com/videos/42.mp4
+                        average_score: 9.1
+                        reactions_count: 200
+                        comments_count: 8
+                        created_at: 1700000000
+                    total: 1
+                    limit: 20
+                    offset: 0
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/service/video/{videoId}:
+    parameters:
+      - name: videoId
+        description: The unique identifier of the video.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/VideoId'
+    get:
+      operationId: GetVideo
+      summary: Get the video corresponding to the provided `videoId`
+      tags:
+        - service
+      security: []
+      responses:
+        '200':
+          description: Video corresponding to the provided `videoId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Video'
+              examples:
+                video:
+                  summary: A single video
+                  value:
+                    id: 42
+                    title: Python tutorial part 1
+                    description: Getting started with Python
+                    duration_seconds: 120
+                    video_url: https://example.com/videos/42.mp4
+                    average_score: 8.5
+                    reactions_count: 100
+                    comments_count: 5
+                    created_at: 1700000000
+        '404':
+          description: No video found for the provided `videoId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Video not found
+                  value:
+                    error: Video 42 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/service/video/recommended:
+    get:
+      operationId: GetVideoRecommendations
+      summary: Get videos recommended for a specific video
+      tags:
+        - service
+      security: []
+      parameters:
+        - name: videoId
+          in: query
+          required: true
+          description: Identifier of the video to find recommendations for.
+          schema:
+            $ref: '#/components/schemas/VideoId'
+          example: 42
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            default: 20
+            maximum: 100
+          example: 20
+      responses:
+        '200':
+          description: List of recommended videos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoList'
+              examples:
+                results:
+                  summary: Recommendations for video 42
+                  value:
+                    items:
+                      - id: 43
+                        title: Python tutorial part 2
+                        duration_seconds: 140
+                        video_url: https://example.com/videos/43.mp4
+                        average_score: 8.2
+                        reactions_count: 90
+                        comments_count: 3
+                        created_at: 1700000100
+                    total: 1
+                    limit: 20
+                    offset: 0
+        '400':
+          description: Missing or invalid `videoId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing:
+                  summary: Missing `videoId`
+                  value:
+                    error: Query parameter 'videoId' is required
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/service/video/{videoId}/score:
+    parameters:
+      - name: videoId
+        description: The unique identifier of the video being scored.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/VideoId'
+    post:
+      operationId: RankVideo
+      summary: Submit a reaction/score for a video
+      tags:
+        - service
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Score to apply to the target video.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoScore'
+            examples:
+              score:
+                summary: Score a video
+                value:
+                  score: 9
+      responses:
+        '204':
+          description: Score successfully recorded.
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                validation:
+                  summary: Validation error
+                  value:
+                    error: Score must be between 1 and 10
+        '404':
+          description: No video found for the provided `videoId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Video not found
+                  value:
+                    error: Video 42 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+  /api/service/video/comments:
+    get:
+      operationId: GetComments
+      summary: Get comments for a video
+      tags:
+        - service
+      security: []
+      parameters:
+        - name: videoId
+          in: query
+          required: true
+          description: Identifier of the video.
+          schema:
+            $ref: '#/components/schemas/VideoId'
+          example: 42
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            default: 50
+            maximum: 200
+          example: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            default: 0
+          example: 0
+      responses:
+        '200':
+          description: List of comments for the video.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentList'
+              examples:
+                results:
+                  summary: A page of comments
+                  value:
+                    items:
+                      - id: 1
+                        video_id: 42
+                        user_id: 1
+                        text: Great video!
+                        created_at: 1700000000
+                        updated_at: 1700000000
+                    total: 1
+                    limit: 50
+                    offset: 0
+        '400':
+          description: Missing or invalid `videoId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing:
+                  summary: Missing `videoId`
+                  value:
+                    error: Query parameter 'videoId' is required
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    post:
+      operationId: CreateComment
+      summary: Add a new comment to a video
+      tags:
+        - service
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Comment to be created.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreate'
+            examples:
+              create:
+                summary: Create a comment
+                value:
+                  video_id: 42
+                  text: Nice explanation!
+      responses:
+        '201':
+          description: Comment successfully created.
+          headers:
+            Location:
+              description: The URL of the newly created comment.
+              schema:
+                type: string
+                format: uri
+              example: "https://scrappy.ai/api/service/video/comments/1"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+              examples:
+                created:
+                  summary: The freshly created comment
+                  value:
+                    id: 1
+                    video_id: 42
+                    user_id: 1
+                    text: Nice explanation!
+                    created_at: 1700000000
+                    updated_at: 1700000000
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                validation:
+                  summary: Validation error
+                  value:
+                    error: Comment text must not be empty
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    put:
+      operationId: UpdateComment
+      summary: Update an existing comment
+      tags:
+        - service
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Updated comment payload.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentUpdate'
+            examples:
+              update:
+                summary: Update a comment
+                value:
+                  comment_id: 1
+                  text: Even better explanation!
+      responses:
+        '200':
+          description: Comment after successful update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+              examples:
+                updated:
+                  summary: Updated comment
+                  value:
+                    id: 1
+                    video_id: 42
+                    user_id: 1
+                    text: Even better explanation!
+                    created_at: 1700000000
+                    updated_at: 1700000100
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                validation:
+                  summary: Validation error
+                  value:
+                    error: Comment text must not be empty
+        '404':
+          description: No comment found for the provided `comment_id`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Comment not found
+                  value:
+                    error: Comment 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+    delete:
+      operationId: DeleteComment
+      summary: Delete a comment
+      tags:
+        - service
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: commentId
+          in: query
+          required: true
+          description: Identifier of the comment to delete.
+          schema:
+            type: integer
+            format: int64
+          example: 1
+      responses:
+        '204':
+          description: Comment successfully deleted.
+        '404':
+          description: No comment found for the provided `commentId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Comment not found
+                  value:
+                    error: Comment 1 not found
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    error: Internal server error
+
+components:
+  schemas:
+    # --- JOB SCHEMAS ---
+    JobId:
+      description: The unique identifier of a job.
+      type: integer
+      format: int64
+      example: 100
+
+    JobStatus:
+      description: Status of a job.
+      type: string
+      enum:
+        - created
+        - validating
+        - running
+        - pausing
+        - paused
+        - stopping
+        - stopped
+        - completed
+        - failed
+      example: created
+
+    JobConfig:
+      description: Job's task configuration.
+      type: object
+      required:
+        - range
+        - request_timeout_seconds
+        - max_retries
+        - stop_on_consecutive_missing
+      properties:
+        range:
+          description: Job's range of identifiers to process.
+          type: object
+          required:
+            - from
+            - to
+          properties:
+            from:
+              description: Job's starting index.
+              type: integer
+              format: int64
+              example: 1
+            to:
+              description: Job's ending index.
+              type: integer
+              format: int64
+              example: 1000
+        request_timeout_seconds:
+          description: Number of seconds for worker to wait answer from Kinescope before closing connection.
+          type: integer
+          format: int32
+          example: 30
+        max_retries:
+          description: Maximum number of retries due to rate limiting.
+          type: integer
+          format: int32
+          example: 3
+        global_rate_limit_rps:
+          description: Maximum allowed worker's requests per second.
+          type: integer
+          format: int32
+          example: 10
+        stop_on_consecutive_missing:
+          description: Stop processing after this many consecutive missing identifiers.
+          type: integer
+          format: int32
+          example: 5
+      example:
+        range:
+          from: 1
+          to: 1000
+        request_timeout_seconds: 30
+        max_retries: 3
+        global_rate_limit_rps: 10
+        stop_on_consecutive_missing: 5
+
+    Job:
+      description: Job configuration.
+      type: object
+      required:
+        - id
+        - name
+        - job
+      properties:
+        id:
+          $ref: '#/components/schemas/JobId'
+        name:
+          description: Job's name.
+          type: string
+          example: Scrape batch #1
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        job:
+          $ref: '#/components/schemas/JobConfig'
+        servers:
+          description: Worker's configuration attached to the job.
+          $ref: '#/components/schemas/Worker'
+      example:
+        id: 100
+        name: Scrape batch #1
+        status: running
+        job:
+          range:
+            from: 1
+            to: 1000
+          request_timeout_seconds: 30
+          max_retries: 3
+          global_rate_limit_rps: 10
+          stop_on_consecutive_missing: 5
+        servers:
+          id: 1
+          name: worker-1
+
+    JobCreate:
+      description: Payload to create a new job.
+      type: object
+      required:
+        - name
+        - job
+      properties:
+        name:
+          description: Job's name.
+          type: string
+          example: Scrape batch #2
+        job:
+          $ref: '#/components/schemas/JobConfig'
+      example:
+        name: Scrape batch #2
+        job:
+          range:
+            from: 1
+            to: 1000
+          request_timeout_seconds: 30
+          max_retries: 3
+          global_rate_limit_rps: 10
+          stop_on_consecutive_missing: 5
+
+    JobUpdate:
+      description: Fields to update on a job.
+      type: object
+      properties:
+        name:
+          description: Job's name.
+          type: string
+          example: Renamed batch
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        job:
+          $ref: '#/components/schemas/JobConfig'
+        servers:
+          description: Worker's configuration to attach to the job.
+          $ref: '#/components/schemas/Worker'
+      example:
+        name: Renamed batch
+
+    JobRange:
+      description: Range block of a job that is given for processing to a worker.
+      type: object
+      required:
+        - id
+        - job_id
+        - range_start
+        - range_end
+        - next_id
+        - created_at
+        - updated_at
+      properties:
+        id:
+          description: Unique identifier of the range.
+          type: integer
+          format: int64
+          example: 1
+        job_id:
+          description: Identifier of the job that the range belongs to.
+          type: integer
+          format: int64
+          example: 100
+        range_start:
+          description: First identifier in the range.
+          type: integer
+          format: int64
+          example: 1
+        range_end:
+          description: Last identifier in the range.
+          type: integer
+          format: int64
+          example: 1000
+        next_id:
+          description: Next identifier that should be processed in the range.
+          type: integer
+          format: int64
+          example: 1
+        status:
+          description: Status of the last identifier.
+          $ref: '#/components/schemas/JobStatus'
+        leased_by:
+          description: >
+            Identifier of the worker to which this range belongs.
+            Doesn't belong to any worker if left empty.
+          $ref: '#/components/schemas/WorkerId'
+          default: null
+        lease_expires_at:
+          description: Unix timestamp (seconds) of when the lease should expire.
+          type: integer
+          format: int64
+          example: 1700000060
+        attempt:
+          description: Current download attempt after rate limiting.
+          type: integer
+          format: int32
+          default: 0
+          example: 0
+        created_at:
+          description: Unix timestamp (seconds) of range creation.
+          type: integer
+          format: int64
+          example: 1700000000
+        updated_at:
+          description: Unix timestamp (seconds) of last range update.
+          type: integer
+          format: int64
+          example: 1700000300
+      example:
+        id: 1
+        job_id: 100
+        range_start: 1
+        range_end: 1000
+        next_id: 1
+        status: running
+        leased_by: 1
+        lease_expires_at: 1700000060
+        attempt: 0
+        created_at: 1700000000
+        updated_at: 1700000000
+
+    JobEvent:
+      description: Free-form job event message.
+      type: string
+      example: job started
+
+    JobMetrics:
+      description: Aggregated telemetry data from workers of some job.
+      $ref: '#/components/schemas/WorkerMetrics'
+
+    # --- WORKER SCHEMAS ---
+    WorkerId:
+      description: The unique identifier of a worker.
+      type: integer
+      format: int64
+      example: 1
+
+    Worker:
+      description: General worker's info.
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          $ref: '#/components/schemas/WorkerId'
+        name:
+          description: Worker's name.
+          type: string
+          example: worker-1
+        host:
+          description: Worker's host used for establishing an SSH connection.
+          type: string
+          example: 192.168.1.10
+        ssh_port:
+          description: Worker's port used for establishing an SSH connection.
+          type: integer
+          format: int32
+          example: 22
+        ssh_user:
+          description: Worker's user used for establishing an SSH connection.
+          type: string
+          example: root
+        ssh_key:
+          description: Worker's private key used for establishing an SSH connection.
+          type: string
+          format: password
+        threads:
+          description: Number of threads used by a worker both for checking and download.
+          type: integer
+          format: int32
+          example: 8
+        storage_path:
+          description: Path to the video/metadata storage.
+          type: string
+          example: /data/videos
+        min_free_space_gb:
+          description: Required minimum space in GB for the worker.
+          type: integer
+          format: int32
+          example: 50
+      example:
+        id: 1
+        name: worker-1
+        host: 192.168.1.10
+        ssh_port: 22
+        ssh_user: root
+        threads: 8
+        storage_path: /data/videos
+        min_free_space_gb: 50
+
+    WorkerUpdate:
+      description: Fields to update on a worker.
+      type: object
+      properties:
+        name:
+          description: Worker's name.
+          type: string
+          example: worker-renamed
+        host:
+          description: Worker's host used for establishing an SSH connection.
+          type: string
+          example: 192.168.1.11
+        ssh_port:
+          description: Worker's port used for establishing an SSH connection.
+          type: integer
+          format: int32
+          example: 22
+        ssh_user:
+          description: Worker's user used for establishing an SSH connection.
+          type: string
+          example: root
+        ssh_key:
+          description: Worker's private key used for establishing an SSH connection.
+          type: string
+          format: password
+        threads:
+          description: Number of threads used by a worker both for checking and download.
+          type: integer
+          format: int32
+          example: 16
+        storage_path:
+          description: Path to the video/metadata storage.
+          type: string
+          example: /data/videos
+        min_free_space_gb:
+          description: Required minimum space in GB for the worker.
+          type: integer
+          format: int32
+          example: 100
+      example:
+        threads: 16
+        min_free_space_gb: 100
+
+    WorkerRegister:
+      description: Request body sent by a user to register a worker.
+      type: object
+      required:
+        - ssh_host
+        - ssh_port
+      properties:
+        ssh_host:
+          description: Host of a PC on which to install a worker.
+          type: string
+          example: 192.168.1.10
+        ssh_port:
+          description: SSH port of a PC on which to install a worker.
+          type: integer
+          format: int32
+          example: 22
+      example:
+        ssh_host: 192.168.1.10
+        ssh_port: 22
+
+    WorkerMetrics:
+      description: Worker telemetry snapshot.
+      type: object
+      required:
+        - cpu_load
+        - memory_load
+        - disk_load
+        - network_load
+        - free_space_bytes
+        - n_opened_files
+        - n_active_connections
+        - worker_uptime
+        - identifiers_per_second
+        - n_requests
+        - n_found_materials
+        - n_active_downloads
+        - n_bytes_per_second
+        - avg_check_speed
+        - avg_download_speed
+        - download_queue_size
+        - n_repeated_attempts
+        - n_final_errors
+        - oldest_in_queue
+      properties:
+        cpu_load:
+          description: CPU load in percent.
+          type: number
+          format: double
+          example: 45.2
+        memory_load:
+          description: RAM and SWAP load in percent.
+          type: number
+          format: double
+          example: 60.5
+        disk_load:
+          description: Disk IO load in percent.
+          type: number
+          format: double
+          example: 30.0
+        network_load:
+          description: Network load in percent.
+          type: number
+          format: double
+          example: 20.5
+        free_space_bytes:
+          description: Free space left in bytes.
+          type: integer
+          format: int64
+          example: 1073741824
+        n_opened_files:
+          description: Number of currently opened files.
+          type: integer
+          format: int64
+          example: 100
+        n_active_connections:
+          description: Number of currently active connections.
+          type: integer
+          format: int64
+          example: 10
+        worker_uptime:
+          description: Uptime of the worker in seconds.
+          type: integer
+          format: int64
+          example: 3600
+        identifiers_per_second:
+          description: Number of identifiers being processed per second.
+          type: number
+          format: double
+          example: 5.5
+        n_requests:
+          description: Number of requests sent.
+          type: integer
+          format: int64
+          example: 1000
+        n_found_materials:
+          description: Number of found materials.
+          type: integer
+          format: int64
+          example: 800
+        n_active_downloads:
+          description: Number of active downloads.
+          type: integer
+          format: int64
+          example: 5
+        n_bytes_per_second:
+          description: Number of bytes being downloaded per second.
+          type: number
+          format: double
+          example: 1048576
+        avg_check_speed:
+          description: Average speed of checking an identifier (seconds).
+          type: number
+          format: double
+          example: 0.5
+        avg_download_speed:
+          description: Average download speed (MB/s).
+          type: number
+          format: double
+          example: 2.5
+        download_queue_size:
+          description: Size of the download queue.
+          type: integer
+          format: int64
+          example: 100
+        n_repeated_attempts:
+          description: Number of repeated attempts after rate limiting.
+          type: integer
+          format: int64
+          example: 10
+        n_final_errors:
+          description: Number of final errors.
+          type: integer
+          format: int64
+          example: 2
+        oldest_in_queue:
+          description: Age (seconds) of the oldest task in the download queue.
+          type: integer
+          format: int64
+          example: 120
+      example:
+        cpu_load: 45.2
+        memory_load: 60.5
+        disk_load: 30.0
+        network_load: 20.5
+        free_space_bytes: 1073741824
+        n_opened_files: 100
+        n_active_connections: 10
+        worker_uptime: 3600
+        identifiers_per_second: 5.5
+        n_requests: 1000
+        n_found_materials: 800
+        n_active_downloads: 5
+        n_bytes_per_second: 1048576
+        avg_check_speed: 0.5
+        avg_download_speed: 2.5
+        download_queue_size: 100
+        n_repeated_attempts: 10
+        n_final_errors: 2
+        oldest_in_queue: 120
+
+    # --- USER SCHEMAS ---
+    UserId:
+      description: The unique identifier of a user.
+      type: integer
+      format: int64
+      example: 1
+
+    UserRole:
+      description: Role assigned to a user.
+      type: string
+      enum:
+        - viewer
+        - operator
+        - administrator
+      example: viewer
+
+    User:
+      description: General user info.
+      type: object
+      required:
+        - id
+        - username
+        - role
+      properties:
+        id:
+          $ref: '#/components/schemas/UserId'
+        username:
+          description: Unique login name of the user.
+          type: string
+          example: johndoe
+        email:
+          description: Email address of the user.
+          type: string
+          format: email
+          example: johndoe@example.com
+        avatar:
+          description: Avatar of the user, base64-encoded.
+          type: string
+          format: byte
+        role:
+          $ref: '#/components/schemas/UserRole'
+        created_at:
+          description: Unix timestamp (seconds) of user creation.
+          type: integer
+          format: int64
+          example: 1700000000
+        updated_at:
+          description: Unix timestamp (seconds) of the last user update.
+          type: integer
+          format: int64
+          example: 1700000100
+      example:
+        id: 1
+        username: johndoe
+        email: johndoe@example.com
+        role: viewer
+        created_at: 1700000000
+        updated_at: 1700000000
+
+    UserRegister:
+      description: Registration form fields.
+      type: object
+      required:
+        - username
+        - email
+        - password
+      properties:
+        username:
+          description: Desired login name.
+          type: string
+          minLength: 3
+          maxLength: 64
+          example: johndoe
+        email:
+          description: Email address.
+          type: string
+          format: email
+          example: johndoe@example.com
+        password:
+          description: Account password.
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 64
+          example: hunter2hunter2
+      example:
+        username: johndoe
+        email: johndoe@example.com
+        password: hunter2hunter2
+
+    UserLogin:
+      description: Login form fields.
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          description: Registered email address.
+          type: string
+          format: email
+          example: johndoe@example.com
+        password:
+          description: Account password.
+          type: string
+          format: password
+          example: hunter2hunter2
+      example:
+        email: johndoe@example.com
+        password: hunter2hunter2
+
+    TokenPair:
+      description: Access and refresh token pair issued after login/refresh.
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+      properties:
+        access_token:
+          description: Short-lived JWT access token.
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc
+        refresh_token:
+          description: Long-lived JWT refresh token.
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
+        token_type:
+          description: Token type, always "Bearer".
+          type: string
+          const: "Bearer"
+      example:
+        access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc
+        refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
+        token_type: Bearer
+
+    RefreshTokenRequest:
+      description: Refresh request payload.
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          description: The refresh token previously issued to the client.
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
+      example:
+        refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
+
+    UserUpdate:
+      description: Fields to update on a user.
+      type: object
+      properties:
+        username:
+          description: New login name.
+          type: string
+          minLength: 3
+          maxLength: 64
+          example: john_doe
+        email:
+          description: New email address.
+          type: string
+          format: email
+          example: john_doe@example.com
+        avatar:
+          description: New avatar, base64-encoded.
+          type: string
+          format: byte
+        password:
+          description: New password.
+          type: string
+          format: password
+          minLength: 8
+          example: newpassword123
+        role:
+          $ref: '#/components/schemas/UserRole'
+      example:
+        username: john_doe
+
+    # --- WEB SERVICE SCHEMAS ---
+    VideoId:
+      description: The unique identifier of a video.
+      type: integer
+      format: int64
+      example: 42
+
+    Video:
+      description: Video metadata.
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          $ref: '#/components/schemas/VideoId'
+        title:
+          description: Video title.
+          type: string
+          example: Python tutorial part 1
+        description:
+          description: Video description.
+          type: string
+          example: Getting started with Python
+        duration_seconds:
+          description: Video duration in seconds.
+          type: integer
+          format: int64
+          example: 120
+        thumbnail:
+          description: Video thumbnail, base64-encoded.
+          type: string
+          format: byte
+        video_url:
+          description: URL of the video file.
+          type: string
+          format: uri
+          example: https://example.com/videos/42.mp4
+        average_score:
+          description: Average score given by users.
+          type: number
+          format: double
+          example: 8.5
+        reactions_count:
+          description: Number of reactions recorded.
+          type: integer
+          format: int64
+          example: 100
+        comments_count:
+          description: Number of comments on the video.
+          type: integer
+          format: int64
+          example: 5
+        created_at:
+          description: Unix timestamp (seconds) of video creation.
+          type: integer
+          format: int64
+          example: 1700000000
+      example:
+        id: 42
+        title: Python tutorial part 1
+        description: Getting started with Python
+        duration_seconds: 120
+        video_url: https://example.com/videos/42.mp4
+        average_score: 8.5
+        reactions_count: 100
+        comments_count: 5
+        created_at: 1700000000
+
+    VideoList:
+      description: Paginated list of videos.
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Video'
+        total:
+          description: Total number of matching videos.
+          type: integer
+          format: int64
+          example: 1
+        limit:
+          description: Maximum number of items returned.
+          type: integer
+          format: int32
+          example: 20
+        offset:
+          description: Number of items skipped.
+          type: integer
+          format: int32
+          example: 0
+      example:
+        items:
+          - id: 42
+            title: Python tutorial part 1
+            duration_seconds: 120
+            video_url: https://example.com/videos/42.mp4
+            average_score: 8.5
+            reactions_count: 100
+            comments_count: 5
+            created_at: 1700000000
+        total: 1
+        limit: 20
+        offset: 0
+
+    VideoScore:
+      description: Score a video.
+      type: object
+      required:
+        - score
+      properties:
+        score:
+          description: User's score for the video.
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 10
+          example: 9
+      example:
+        score: 9
+
+    Comment:
+      description: A comment left on a video.
+      type: object
+      required:
+        - id
+        - video_id
+        - user_id
+        - text
+      properties:
+        id:
+          description: Comment identifier.
+          type: integer
+          format: int64
+          example: 1
+        video_id:
+          $ref: '#/components/schemas/VideoId'
+        user_id:
+          $ref: '#/components/schemas/UserId'
+        text:
+          description: Comment text.
+          type: string
+          example: Great video!
+        created_at:
+          description: Unix timestamp (seconds) of comment creation.
+          type: integer
+          format: int64
+          example: 1700000000
+        updated_at:
+          description: Unix timestamp (seconds) of last comment update.
+          type: integer
+          format: int64
+          example: 1700000000
+      example:
+        id: 1
+        video_id: 42
+        user_id: 1
+        text: Great video!
+        created_at: 1700000000
+        updated_at: 1700000000
+
+    CommentList:
+      description: Paginated list of comments.
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+        total:
+          description: Total number of comments.
+          type: integer
+          format: int64
+          example: 1
+        limit:
+          description: Maximum number of items returned.
+          type: integer
+          format: int32
+          example: 50
+        offset:
+          description: Number of items skipped.
+          type: integer
+          format: int32
+          example: 0
+      example:
+        items:
+          - id: 1
+            video_id: 42
+            user_id: 1
+            text: Great video!
+            created_at: 1700000000
+            updated_at: 1700000000
+        total: 1
+        limit: 50
+        offset: 0
+
+    CommentCreate:
+      description: Body to create a new comment.
+      type: object
+      required:
+        - video_id
+        - text
+      properties:
+        video_id:
+          $ref: '#/components/schemas/VideoId'
+        text:
+          description: Comment text.
+          type: string
+          minLength: 1
+          maxLength: 2000
+          example: Nice explanation!
+      example:
+        video_id: 42
+        text: Nice explanation!
+
+    CommentUpdate:
+      description: Body to update an existing comment.
+      type: object
+      required:
+        - comment_id
+        - text
+      properties:
+        comment_id:
+          description: Comment identifier.
+          type: integer
+          format: int64
+          example: 1
+        text:
+          description: New comment text.
+          type: string
+          minLength: 1
+          maxLength: 2000
+          example: Even better explanation!
+      example:
+        comment_id: 1
+        text: Even better explanation!
+
+    # --- OTHER SCHEMAS ---
+    Error:
+      description: Definition for the general error class.
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          description: A human readable error message.
+          type: string
+          example: Internal server error
+      example:
+        error: Internal server error
+
+    SubscribeFilter:
+      description: Filter used to subscribe to certain identifiers.
+      type: array
+      items:
+        oneOf:
+          - type: integer
+            description: A single ID.
+            format: int64
+          - type: string
+            pattern: '^\d+-\d+$'
+            description: A range of IDs.
+      example: ["100-101", 200, 103]
+
+  securitySchemes:
+    # JWT token
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Pass your client/user JWT here.
+
+    # The HTTP Signature headers from RFC 9421
+    HttpMessageSignature:
+      type: apiKey
+      in: header
+      name: Signature
+      description: >
+        Requires RFC 9421 HTTP message signatures. 
+        Must be together with 'Signature-Input' and 'Signature-Key' headers.

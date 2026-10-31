@@ -1,3 +1,4 @@
 *.yaml
+!openapi.yaml
 *.key
 *.crt
