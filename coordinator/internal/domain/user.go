@@ -1,40 +1,44 @@
 package domain
 
 import (
-	"bytes"
-	"crypto/rand"
+	"coordinator/internal/utility"
 	"encoding/base64"
-	"errors"
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/argon2"
+	"github.com/golang-jwt/jwt/v5"
 )
 
-const (
-	SALT_SIZE      = 12
-	ARGON2_TIME    = 1
-	ARGON2_MEMORY  = 64 * 1024
-	ARGON2_THREADS = 4
+// Errors
+var (
+	ErrUsernameValidationFailed = utility.NewValidationError("username must consist only of english characters and arabic digits, and be at least 8 characters long")
+	ErrEmailValidationFailed    = utility.NewValidationError("passed email is invalid")
+	ErrPasswordValidationFailed = utility.NewValidationError("password must be at least 8 characters long, consist of english letters, digits, or allowed symbols ('.', '!', '?', '-', '_', '+', and '@')")
+	ErrAvatarValidationFailed   = utility.NewValidationError("passed avatar image isn't base64 encoded")
+	ErrRoleValidationFailed     = utility.NewValidationError("user role must be one of these: viewer, operator, and administrator")
 )
 
-type User struct {
-	ID           int       `json:"id"`
-	Username     string    `json:"username"`
-	Email        string    `json:"email"`
-	PasswordHash []byte    `json:"password_hash"`
-	Salt         []byte    `json:"salt"`
-	Avatar       string    `json:"avatar"`
-	Role         UserRole  `json:"role"`
-	CreatedAt    time.Time `json:"created_at"`
-}
+// Username string with username validation
+// String value must consist of english letters, digits, and some symbols
+// String value must be at least 8 letters long
+type Username string
 
-type UserTokens struct {
-	AcessToken   string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
+// Email string with email validation
+// String value must be a valid email
+type Email string
 
+// UserRole string with user role validation
+// String value must be one of the valid user roles
 type UserRole string
+
+// Avatar string with avatar validation
+// String value must be a valid base64 encoded string
+type Avatar string
+
+// Password string with username validation
+// String value must consist of english letters, digits, and some symbols
+// String value must be at least 8 letters long
+type Password string
 
 const (
 	UserRoleViewer        UserRole = "viewer"
@@ -42,77 +46,124 @@ const (
 	UserRoleAdministrator UserRole = "administrator"
 )
 
-func GenerateUserTokens(user User) (UserTokens, error) {
-	return UserTokens{}, nil
+// NewUsername casts a string to an Username with validation
+func NewUsername(v string) (Username, error) {
+	if len(v) < 8 {
+		return "", ErrUsernameValidationFailed
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == ' ':
+		default:
+			return "", ErrUsernameValidationFailed
+		}
+	}
+	return Username(v), nil
 }
 
-func (u *User) VerifyPassword(password string) bool {
-	hash := argon2.IDKey(
-		[]byte(password),
-		u.Salt,
-		ARGON2_TIME,
-		ARGON2_MEMORY,
-		ARGON2_THREADS,
-		uint32(len(u.PasswordHash)),
-	)
-	return bytes.Equal(hash, u.PasswordHash)
-}
+// NewEmail casts a string to an Email with validation
+func NewEmail(v string) (Email, error) {
+	parts := strings.Split(v, "@")
+	if len(parts) != 2 {
+		return "", ErrEmailValidationFailed
+	}
+	userPart, domainPart := parts[0], parts[1]
 
-func (u *User) SetUsername(username string) error {
-	u.Username = username
-	return nil
-}
-
-func (u *User) SetEmail(email string) error {
-	firstCheck := strings.SplitN(email, "@", 2)
-	if len(firstCheck) != 2 {
-		return errors.New("Email is invalid")
+	if len(userPart) == 0 || len(domainPart) == 0 {
+		return "", ErrEmailValidationFailed
 	}
 
-	secondCheck := strings.SplitN(email, ".", 2)
-	if len(secondCheck) != 2 {
-		return errors.New("Email is invalid")
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '.' || c == '-' || c == '_' || c == '+' || c == '@':
+		default:
+			return "", ErrEmailValidationFailed
+		}
 	}
 
-	u.Email = email
-	return nil
-}
-
-func (u *User) SetPassword(password string) error {
-	if len(password) < 8 {
-		return errors.New("Password is too short")
+	if !strings.Contains(domainPart, ".") {
+		return "", ErrEmailValidationFailed
 	}
 
-	u.Salt = make([]byte, SALT_SIZE)
-	rand.Reader.Read(u.Salt)
-
-	u.PasswordHash = argon2.IDKey(
-		[]byte(password),
-		u.Salt,
-		ARGON2_TIME,
-		ARGON2_MEMORY,
-		ARGON2_THREADS,
-		uint32(len(u.PasswordHash)),
-	)
-
-	return nil
+	return Email(v), nil
 }
 
-func (u *User) SetAvatar(avatar string) error {
-	_, err := base64.RawStdEncoding.DecodeString(avatar)
+// NewPassword casts a string to an Password with validation
+func NewPassword(v string) (Password, error) {
+	if len(v) < 8 {
+		return "", ErrPasswordValidationFailed
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '.' || c == '!' || c == '?' || c == '-' || c == '_' || c == '+' || c == '@':
+		default:
+			return "", ErrPasswordValidationFailed
+		}
+	}
+	return Password(v), nil
+}
+
+// NewAvatar casts a string to an Avatar with validation
+func NewAvatar(v string) (Avatar, error) {
+	_, err := base64.RawStdEncoding.DecodeString(v)
 	if err != nil {
-		return errors.New("Passed avatar image isn't base64 encoded")
+		return "", ErrAvatarValidationFailed
 	}
-	u.Avatar = avatar
-	return nil
+	return Avatar(v), nil
 }
 
-func (u *User) SetRole(role string) error {
-	switch UserRole(role) {
-	case UserRoleViewer, UserRoleAdministrator, UserRoleOperator:
+// NewUserRole casts a string to a UserRole with validation
+func NewUserRole(v string) (UserRole, error) {
+	role := UserRole(v)
+	switch role {
+	case UserRoleViewer, UserRoleOperator, UserRoleAdministrator:
+		return role, nil
 	default:
-		return errors.New("Invalid role")
+		return "", ErrRoleValidationFailed
 	}
-	u.Role = UserRole(role)
-	return nil
+}
+
+// PasswordCredentials a container for hash-salt pair
+type PasswordCredentials struct {
+	Hash []byte `json:"password_hash" validate:"required"`
+	Salt []byte `json:"salt" validate:"required"`
+}
+
+// User account information
+type User struct {
+	ID        int                 `json:"user_id" validate:"required"`
+	Username  Username            `json:"username" validate:"required"`
+	Email     Email               `json:"email" validate:"required"`
+	Password  PasswordCredentials `json:"password" validate:"required"`
+	Role      UserRole            `json:"user_role" validate:"required"`
+	Avatar    Avatar              `json:"avatar" validate:"required"`
+	CreatedAt time.Time           `json:"created_at" validate:"required"`
+}
+
+// UserUpdate optional fields to be updated
+type UserUpdate struct {
+	Username *Username            `json:"username"`
+	Email    *Email               `json:"email"`
+	Password *PasswordCredentials `json:"password"`
+	Avatar   *Avatar              `json:"avatar"`
+	Role     *UserRole            `json:"user_role"`
+}
+
+// UserClaims claims of a user JWT token
+type UserClaims struct {
+	UserID   int    `json:"user_id" validate:"required"`
+	UserRole string `json:"user_role" validate:"required"`
+	jwt.RegisteredClaims
 }
