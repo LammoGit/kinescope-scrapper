@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"strings"
 	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
 // Errors
@@ -159,11 +157,4 @@ type UserUpdate struct {
 	Password *PasswordCredentials `json:"password"`
 	Avatar   *Avatar              `json:"avatar"`
 	Role     *UserRole            `json:"user_role"`
-}
-
-// UserClaims claims of a user JWT token
-type UserClaims struct {
-	UserID   int    `json:"user_id" validate:"required"`
-	UserRole string `json:"user_role" validate:"required"`
-	jwt.RegisteredClaims
 }
