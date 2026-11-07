@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ValidationError
@@ -50,4 +52,9 @@ func StatusFromError(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// SendError
+func SendError(c *gin.Context, err error) {
+	c.AbortWithStatusJSON(StatusFromError(err), gin.H{"error": err.Error()})
 }
