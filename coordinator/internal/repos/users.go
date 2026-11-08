@@ -124,6 +124,8 @@ func (ur *UserRepository) UpdateUser(ctx context.Context, id int, update domain.
 	if update.Role != nil {
 		u.Role = *update.Role
 	}
+
+	ur.users[id] = u
 	return u, nil
 }
 

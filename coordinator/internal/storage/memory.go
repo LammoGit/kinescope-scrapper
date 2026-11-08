@@ -1,0 +1,29 @@
+package storage
+
+import "coordinator/internal/repos"
+
+var _ Storage = &Memory{}
+
+// Memory is the in-memory implementation of Storage
+type Memory struct {
+	*repos.JobRepository
+	*repos.RangeRepository
+	*repos.WorkerRepository
+	*repos.VideoRepository
+	*repos.EventRepository
+	*repos.UserRepository
+	*repos.TelemetryRepository
+}
+
+// NewMemoryStorage creates a fully initialized in-memory storage
+func NewMemoryStorage() *Memory {
+	return &Memory{
+		JobRepository:       repos.NewJobRepository(),
+		RangeRepository:     repos.NewRangeRepository(),
+		WorkerRepository:    repos.NewWorkerRepository(),
+		VideoRepository:     repos.NewVideoRepository(),
+		EventRepository:     repos.NewEventRepository(),
+		UserRepository:      repos.NewUserRepository(),
+		TelemetryRepository: repos.NewTelemetryRepository(),
+	}
+}
