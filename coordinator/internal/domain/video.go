@@ -2,32 +2,24 @@ package domain
 
 import "time"
 
+// Video is a downloaded video belonging to a job
 type Video struct {
-	ID       int           `json:"id" validate:"required"`
-	JobID    int           `json:"job_id" validate:"required"`
-	Metadata VideoMetadata `json:"metadata" validate:"required"`
-	Score    float64       `json:"score"`
-	Scores   []int         `json:"scores"`
-	Comments []Comment     ``
+	ID       int           `json:"id" form:"id" binding:"min=0"`
+	JobID    int           `json:"job_id" form:"job_id" binding:"min=0,required"`
+	Metadata VideoMetadata `json:"metadata" form:"metadata" binding:"required"`
 }
 
+// VideoMetadata contains the metadata of a downloaded video
 type VideoMetadata struct {
-	Title        string    `json:"title" validate:"required"`
-	SourceURL    string    `json:"source_url" validate:"required"`
-	DownloadURL  string    `json:"download_url" validate:"required"`
-	FoundAt      time.Time `json:"found_at" validate:"required"`
-	DownloadedAt time.Time `json:"downloaded_at" validate:"required"`
-	FileSize     int       `json:"file_size" validate:"required"`
-	MimeType     string    `json:"mime_type" validate:"required"`
-	Checksum     []byte    `json:"checksum" validate:"required"`
-	ServerName   string    `json:"server_name" validate:"required"`
-	LocalPath    string    `json:"local_path" validate:"required"`
-	Status       string    `json:"status" validate:"required"`
-}
-
-type Comment struct {
-	UserID    int       `json:"user_id" validate:"required"`
-	Content   string    `json:"content" validate:"required"`
-	CreatedAt time.Time `json:"created_at" validate:"required"`
-	UpdatedAt time.Time `json:"updated_at" validate:"required"`
+	Title        string    `json:"title" form:"title" binding:"required"`
+	SourceURL    string    `json:"source_url" form:"source_url" binding:"required,url"`
+	DownloadURL  string    `json:"download_url" form:"download_url" binding:"required,url"`
+	FoundAt      time.Time `json:"found_at" form:"found_at" binding:"required"`
+	DownloadedAt time.Time `json:"downloaded_at" form:"downloaded_at" binding:"required"`
+	FileSize     int       `json:"file_size" form:"file_size" binding:"required,gt=0"`
+	MimeType     string    `json:"mime_type" form:"mime_type" binding:"required"`
+	Checksum     string    `json:"checksum" form:"checksum" binding:"required,sha256"`
+	ServerName   string    `json:"server_name" form:"server_name" binding:"required"`
+	LocalPath    string    `json:"local_path" form:"local_path" binding:"required,filepath"`
+	Status       string    `json:"status" form:"status" binding:"required"`
 }
