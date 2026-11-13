@@ -1,3 +1,5 @@
+//go:build !postgres && !sqlite
+
 package storage
 
 import "coordinator/internal/repos"
@@ -14,8 +16,8 @@ type Memory struct {
 	*repos.TelemetryRepository
 }
 
-// NewMemoryStorage creates a fully initialized in-memory storage
-func NewMemoryStorage() *Memory {
+// NewStorage creates a fully initialized in-memory storage
+func NewStorage() *Memory {
 	return &Memory{
 		JobRepository:       repos.NewJobRepository(),
 		WorkerRepository:    repos.NewWorkerRepository(),
