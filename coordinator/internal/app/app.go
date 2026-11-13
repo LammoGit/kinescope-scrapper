@@ -22,8 +22,11 @@ type App struct {
 	ctx          context.Context
 }
 
-func New(ctx context.Context, hub *sse.Hub, storage st.Storage) *App {
-	var cryptoService *services.CryptoService
+func New(ctx context.Context, hub *sse.Hub, storage st.Storage) (*App, error) {
+	app := &App{
+		Hub: hub,
+		ctx: ctx,
+	}
 
 	secret := os.Getenv("JWT_SECRET")
 	issuer := os.Getenv("JWT_ISSUER")
@@ -34,7 +37,11 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) *App {
 	saltSize := os.Getenv("SALT_SIZE")
 	s3URL := os.Getenv("S3_SERVER_URL")
 
-	provisioningService, _ := services.NewProvisioningService()
+	provisioningService, err := services.NewProvisioningService()
+	if err != nil {
+		return app, err
+	}
+	app.Provisioning = provisioningService
 
 	{
 		var opts []services.CryptoOption
@@ -53,31 +60,49 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) *App {
 		if val, err := strconv.Atoi(saltSize); err == nil {
 			opts = append(opts, services.WithSaltSize(val))
 		}
-		cryptoService, _ = services.NewCryptoService([]byte(secret), issuer, opts...)
+		cryptoService, err := services.NewCryptoService([]byte(secret), issuer, opts...)
+		if err != nil {
+			return app, err
+		}
+		app.Crypto = cryptoService
+
 	}
 
-	userService, _ := services.NewUserService(storage)
-
-	workerService, _ := services.NewWorkerService(hub, storage)
-
-	jobService, _ := services.NewJobService(ctx, hub, storage)
-
-	eventService, _ := services.NewEventService(hub, storage)
-
-	videoService, _ := services.NewVideoService(storage, s3URL)
-
-	telemetryService, _ := services.NewTelemetryService(hub, storage)
-
-	return &App{
-		Hub:          hub,
-		Provisioning: provisioningService,
-		Crypto:       cryptoService,
-		User:         userService,
-		Worker:       workerService,
-		Job:          jobService,
-		Event:        eventService,
-		Video:        videoService,
-		Telemetry:    telemetryService,
-		ctx:          ctx,
+	userService, err := services.NewUserService(storage)
+	if err != nil {
+		return app, err
 	}
+	app.User = userService
+
+	workerService, err := services.NewWorkerService(hub, storage)
+	if err != nil {
+		return app, err
+	}
+	app.Worker = workerService
+
+	jobService, err := services.NewJobService(ctx, hub, storage)
+	if err != nil {
+		return app, err
+	}
+	app.Job = jobService
+
+	eventService, err := services.NewEventService(hub, storage)
+	if err != nil {
+		return app, err
+	}
+	app.Event = eventService
+
+	videoService, err := services.NewVideoService(storage, s3URL)
+	if err != nil {
+		return app, err
+	}
+	app.Video = videoService
+
+	telemetryService, err := services.NewTelemetryService(hub, storage)
+	if err != nil {
+		return app, err
+	}
+	app.Telemetry = telemetryService
+
+	return app, nil
 }

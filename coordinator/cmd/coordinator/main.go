@@ -8,6 +8,7 @@ import (
 	"coordinator/pkg/sse"
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,14 +30,18 @@ func main() {
 	flag.Parse()
 	if err := validateFlags(); err != nil {
 		fmt.Println(err)
-		return
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
 
 	hub := sse.NewHub()
 	storage := st.NewMemoryStorage()
-	app := app.New(ctx, hub, storage)
+	app, err := app.New(ctx, hub, storage)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(2)
+	}
 
 	// Create a new router and assign it the Recovery middleware
 	router := gin.New()
