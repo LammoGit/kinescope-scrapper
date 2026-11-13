@@ -256,7 +256,7 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 			return
 		}
 
-		err = app.Worker.ReplaceWorker(ctx, worker)
+		err = app.Worker.ReplaceWorkerByID(ctx, worker)
 		if err != nil {
 			utility.SendError(c, err)
 			return

@@ -88,7 +88,7 @@ func (s *JobService) ReplaceJobByID(ctx context.Context, job domain.Job) error {
 
 // DeleteJob removes a job and its ranges
 func (s *JobService) DeleteJob(ctx context.Context, id int) error {
-	err := s.storage.DeleteJob(ctx, id)
+	job, err := s.storage.DeleteJob(ctx, id)
 	result := "success"
 	code := 200
 	msg := "job is deleted successfully"
@@ -97,11 +97,18 @@ func (s *JobService) DeleteJob(ctx context.Context, id int) error {
 		code = utility.StatusFromError(err)
 		msg = err.Error()
 	} else if s.hub != nil {
-		topic := fmt.Sprintf("job-%d", id)
-		s.hub.PublishAll([]string{topic, "job-*"}, sse.SSEMessage{
+		msg := sse.SSEMessage{
 			Event: "job.delete",
 			Data:  map[string]any{"job_id": id},
-		})
+		}
+
+		var topics []string
+		topics = append(topics, "job-*", "worker-*")
+		topics = append(topics, fmt.Sprintf("job-%d", id))
+		for _, id := range job.Workers {
+			topics = append(topics, fmt.Sprintf("worker-%d", id))
+		}
+		s.hub.PublishAll(topics, msg)
 	}
 	s.record(ctx, id, "delete", result, code, msg)
 	return nil
@@ -134,8 +141,8 @@ func (s *JobService) StopJob(ctx context.Context, id int) error {
 }
 
 // changeState changes state of a job, records event, and publishes state change message to the hub
-func (s *JobService) changeState(ctx context.Context, id int, operation, message, state string, change func(context.Context, int) error) error {
-	err := change(ctx, id)
+func (s *JobService) changeState(ctx context.Context, id int, operation, message, state string, change func(context.Context, int) (domain.Job, error)) error {
+	job, err := change(ctx, id)
 
 	// Log state change event
 	result := "success"
@@ -152,8 +159,14 @@ func (s *JobService) changeState(ctx context.Context, id int, operation, message
 	if s.hub == nil {
 		return err
 	}
-	topic := fmt.Sprintf("job-%d", id)
-	s.hub.PublishAll([]string{topic, "job-*"}, sse.SSEMessage{Event: "job.state_change", Data: map[string]any{
+
+	var topics []string
+	topics = append(topics, "job-*", "worker-*")
+	topics = append(topics, fmt.Sprintf("job-%d", id))
+	for _, id := range job.Workers {
+		topics = append(topics, fmt.Sprintf("worker-%d", id))
+	}
+	s.hub.PublishAll(topics, sse.SSEMessage{Event: "job.state_change", Data: map[string]any{
 		"job_id": id,
 		"state":  state,
 	}})

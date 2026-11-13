@@ -28,11 +28,11 @@ type IJobRepository interface {
 	AssignJob(ctx context.Context, id int, worker domain.Worker) error
 	GetJob(ctx context.Context, id int) (domain.Job, error)
 	GetJobs(ctx context.Context) ([]domain.Job, error)
-	DeleteJob(ctx context.Context, id int) error
-	StartJob(ctx context.Context, id int) error
-	PauseJob(ctx context.Context, id int) error
-	ResumeJob(ctx context.Context, id int) error
-	StopJob(ctx context.Context, id int) error
+	DeleteJob(ctx context.Context, id int) (domain.Job, error)
+	StartJob(ctx context.Context, id int) (domain.Job, error)
+	PauseJob(ctx context.Context, id int) (domain.Job, error)
+	ResumeJob(ctx context.Context, id int) (domain.Job, error)
+	StopJob(ctx context.Context, id int) (domain.Job, error)
 	ReplaceJob(ctx context.Context, job domain.Job) error
 
 	// Ranges
@@ -154,25 +154,35 @@ func (jr *JobRepository) GetJobs(ctx context.Context) ([]domain.Job, error) {
 }
 
 // DeleteJob removes a job
-func (jr *JobRepository) DeleteJob(ctx context.Context, id int) error {
+func (jr *JobRepository) DeleteJob(ctx context.Context, id int) (domain.Job, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Job{}, err
 	}
 
 	jr.mu.Lock()
 	defer jr.mu.Unlock()
 
-	if _, ok := jr.jobs[id]; !ok {
-		return ErrJobNotFoundByID
+	var job domain.Job
+	var ok bool
+	if job, ok = jr.jobs[id]; !ok {
+		return job, ErrJobNotFoundByID
 	}
+
+	// Cascade
+	for rangeID, r := range jr.ranges {
+		if r.JobID == id {
+			delete(jr.ranges, rangeID)
+		}
+	}
+
 	delete(jr.jobs, id)
-	return nil
+	return job, nil
 }
 
 // StartJob moves a job into the running state
-func (jr *JobRepository) StartJob(ctx context.Context, id int) error {
+func (jr *JobRepository) StartJob(ctx context.Context, id int) (domain.Job, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Job{}, err
 	}
 
 	jr.mu.Lock()
@@ -180,19 +190,19 @@ func (jr *JobRepository) StartJob(ctx context.Context, id int) error {
 
 	job, ok := jr.jobs[id]
 	if !ok {
-		return ErrJobNotFoundByID
+		return job, ErrJobNotFoundByID
 	}
 
 	job.Status = domain.JobStatusRunning
 	job.Paused = false
 	jr.jobs[id] = job
-	return nil
+	return job, nil
 }
 
 // PauseJob moves a job into the paused state
-func (jr *JobRepository) PauseJob(ctx context.Context, id int) error {
+func (jr *JobRepository) PauseJob(ctx context.Context, id int) (domain.Job, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Job{}, err
 	}
 
 	jr.mu.Lock()
@@ -200,19 +210,19 @@ func (jr *JobRepository) PauseJob(ctx context.Context, id int) error {
 
 	job, ok := jr.jobs[id]
 	if !ok {
-		return ErrJobNotFoundByID
+		return job, ErrJobNotFoundByID
 	}
 
 	job.Status = domain.JobStatusPaused
 	job.Paused = true
 	jr.jobs[id] = job
-	return nil
+	return job, nil
 }
 
 // ResumeJob moves a paused job back into the running state
-func (jr *JobRepository) ResumeJob(ctx context.Context, id int) error {
+func (jr *JobRepository) ResumeJob(ctx context.Context, id int) (domain.Job, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Job{}, err
 	}
 
 	jr.mu.Lock()
@@ -220,19 +230,19 @@ func (jr *JobRepository) ResumeJob(ctx context.Context, id int) error {
 
 	job, ok := jr.jobs[id]
 	if !ok {
-		return ErrJobNotFoundByID
+		return job, ErrJobNotFoundByID
 	}
 
 	job.Status = domain.JobStatusRunning
 	job.Paused = false
 	jr.jobs[id] = job
-	return nil
+	return job, nil
 }
 
 // StopJob moves a job into the stopped state
-func (jr *JobRepository) StopJob(ctx context.Context, id int) error {
+func (jr *JobRepository) StopJob(ctx context.Context, id int) (domain.Job, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Job{}, err
 	}
 
 	jr.mu.Lock()
@@ -241,14 +251,14 @@ func (jr *JobRepository) StopJob(ctx context.Context, id int) error {
 	job, ok := jr.jobs[id]
 	if !ok {
 
-		return ErrJobNotFoundByID
+		return job, ErrJobNotFoundByID
 	}
 
 	job.Status = domain.JobStatusStopped
 	job.Paused = true
 	job.DeassignWorkers()
 	jr.jobs[id] = job
-	return nil
+	return job, nil
 }
 
 // ReplaceJob replaces a stored job

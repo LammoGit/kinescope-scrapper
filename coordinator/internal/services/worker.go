@@ -97,8 +97,8 @@ func (s *WorkerService) GetWorkerByID(ctx context.Context, id int) (domain.Worke
 	return worker, nil
 }
 
-// UpdateWorkerByID applies an update to a worker
-func (s *WorkerService) ReplaceWorker(ctx context.Context, worker domain.Worker) error {
+// ReplaceWorkerByID replaces current worker data with new one
+func (s *WorkerService) ReplaceWorkerByID(ctx context.Context, worker domain.Worker) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
