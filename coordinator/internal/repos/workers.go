@@ -1,68 +1,89 @@
 package repos
 
 import (
+	"context"
 	"coordinator/internal/domain"
-	"sort"
+	"coordinator/internal/utility"
 	"sync"
 )
 
+// Won't compile if *WorkerRepository doesn't implement IWorkerRepository
 var _ IWorkerRepository = &WorkerRepository{}
+
+// Errors
+var (
+	ErrWorkerNotFoundByID = utility.NewNotFoundError("worker with given id doesn't exist")
+)
 
 // IWorkerRepository stores registered workers
 type IWorkerRepository interface {
-	GetWorkerByID(workerID int) (*domain.Worker, bool)
-	GetWorkers() []domain.Worker
-	AddWorker(worker domain.Worker) domain.Worker
-	UpdateWorker(worker domain.Worker) bool
-	DeleteWorkerByID(workerID int) bool
+	GetWorkerByID(ctx context.Context, workerID int) (domain.Worker, error)
+	GetWorkers(ctx context.Context) ([]domain.Worker, error)
+	AddWorker(ctx context.Context, worker domain.Worker) error
+	ReplaceWorker(ctx context.Context, worker domain.Worker) error
+	DeleteWorkerByID(ctx context.Context, workerID int) error
 }
 
 // WorkerRepository is an in-memory worker store
 type WorkerRepository struct {
 	workers map[int]domain.Worker
-	m       sync.RWMutex
 	nextID  int
+	mu      sync.RWMutex
 }
 
 // NewWorkerRepository creates a new WorkerRepository
 func NewWorkerRepository() *WorkerRepository {
-	return &WorkerRepository{workers: make(map[int]domain.Worker)}
+	return &WorkerRepository{
+		workers: make(map[int]domain.Worker),
+		nextID:  1,
+	}
 }
 
 // GetWorkerByID returns a copy of a worker by its identifier
-func (wr *WorkerRepository) GetWorkerByID(workerID int) (*domain.Worker, bool) {
-	wr.m.RLock()
-	defer wr.m.RUnlock()
+func (wr *WorkerRepository) GetWorkerByID(ctx context.Context, workerID int) (domain.Worker, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.Worker{}, err
+	}
+
+	wr.mu.RLock()
+	defer wr.mu.RUnlock()
 
 	worker, ok := wr.workers[workerID]
 	if !ok {
-		return nil, false
+		return domain.Worker{}, ErrWorkerNotFoundByID
 	}
-	return &worker, true
+	return worker, nil
 }
 
 // GetWorkers returns all registered workers ordered by identifier
-func (wr *WorkerRepository) GetWorkers() []domain.Worker {
-	wr.m.RLock()
-	defer wr.m.RUnlock()
+func (wr *WorkerRepository) GetWorkers(ctx context.Context) ([]domain.Worker, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	wr.mu.RLock()
+	defer wr.mu.RUnlock()
 
 	ids := make([]int, 0, len(wr.workers))
 	for id := range wr.workers {
 		ids = append(ids, id)
 	}
-	sort.Ints(ids)
 
 	res := make([]domain.Worker, 0, len(ids))
 	for _, id := range ids {
 		res = append(res, wr.workers[id])
 	}
-	return res
+	return res, nil
 }
 
 // AddWorker stores a worker, assigning it an identifier when needed
-func (wr *WorkerRepository) AddWorker(worker domain.Worker) domain.Worker {
-	wr.m.Lock()
-	defer wr.m.Unlock()
+func (wr *WorkerRepository) AddWorker(ctx context.Context, worker domain.Worker) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	wr.mu.Lock()
+	defer wr.mu.Unlock()
 
 	if worker.ID == 0 {
 		wr.nextID++
@@ -74,29 +95,37 @@ func (wr *WorkerRepository) AddWorker(worker domain.Worker) domain.Worker {
 		worker.Status = domain.WorkerStatusOff
 	}
 	wr.workers[worker.ID] = worker
-	return worker
+	return nil
 }
 
-// UpdateWorker replaces a stored worker
-func (wr *WorkerRepository) UpdateWorker(worker domain.Worker) bool {
-	wr.m.Lock()
-	defer wr.m.Unlock()
+// ReplaceWorker replaces a stored worker
+func (wr *WorkerRepository) ReplaceWorker(ctx context.Context, worker domain.Worker) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	wr.mu.Lock()
+	defer wr.mu.Unlock()
 
 	if _, ok := wr.workers[worker.ID]; !ok {
-		return false
+		return ErrWorkerNotFoundByID
 	}
 	wr.workers[worker.ID] = worker
-	return true
+	return nil
 }
 
 // DeleteWorkerByID removes a worker
-func (wr *WorkerRepository) DeleteWorkerByID(workerID int) bool {
-	wr.m.Lock()
-	defer wr.m.Unlock()
+func (wr *WorkerRepository) DeleteWorkerByID(ctx context.Context, workerID int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	wr.mu.Lock()
+	defer wr.mu.Unlock()
 
 	if _, ok := wr.workers[workerID]; !ok {
-		return false
+		return ErrWorkerNotFoundByID
 	}
 	delete(wr.workers, workerID)
-	return true
+	return nil
 }

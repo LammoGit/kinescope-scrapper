@@ -696,34 +696,7 @@ paths:
                   oldest_in_queue: 120
       responses:
         '200':
-          description: Metrics of the worker corresponding to the provided `workerId`.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkerMetrics'
-              examples:
-                metrics:
-                  summary: Current metrics
-                  value:
-                    cpu_load: 45.2
-                    memory_load: 60.5
-                    disk_load: 30.0
-                    network_load: 20.5
-                    free_space_bytes: 1073741824
-                    n_opened_files: 100
-                    n_active_connections: 10
-                    worker_uptime: 3600
-                    identifiers_per_second: 5.5
-                    n_requests: 1000
-                    n_found_materials: 800
-                    n_active_downloads: 5
-                    n_bytes_per_second: 1048576
-                    avg_check_speed: 0.5
-                    avg_download_speed: 2.5
-                    download_queue_size: 100
-                    n_repeated_attempts: 10
-                    n_final_errors: 2
-                    oldest_in_queue: 120
+          description: Empty success message
         '404':
           description: No worker found for the provided `workerId`.
           content:

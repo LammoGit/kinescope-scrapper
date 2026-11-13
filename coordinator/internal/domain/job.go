@@ -1,53 +1,11 @@
 package domain
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
-// Job is a scraping task and its current state
-type Job struct {
-	ID         int       `json:"id" form:"id" binding:"min=0"`
-	Config     JobConfig `json:"config" form:"config" binding:"required"`
-	Status     string    `json:"status" form:"status" binding:"required,oneof=created validating running pausing paused stopping stopped completed failed"`
-	Metrics    Metrics   `json:"metrics" form:"metrics"`
-	WorkerID   string    `json:"worker_id" form:"worker_id"`
-	Paused     bool      `json:"paused" form:"paused"`
-	Expiration time.Time `json:"expiration" form:"expiration"`
-	workers    []*Worker
-}
-
-// JobCreate is the payload accepted when creating a new job
-type JobCreate struct {
-	Name string      `json:"name" form:"name" binding:"required,min=1,max=128"`
-	Job  JobSettings `json:"job" form:"job" binding:"required"`
-}
-
-// JobUpdate optional fields to be updated
-type JobUpdate struct {
-	Name *string      `json:"name" form:"name" binding:"omitempty,min=1,max=128"`
-	Job  *JobSettings `json:"job" form:"job"`
-}
-
-// JobConfig contains the user-provided configuration of a job
-type JobConfig struct {
-	Name    string      `json:"name" form:"name" binding:"required"`
-	Job     JobSettings `json:"job" form:"job" binding:"required"`
-	Servers []Worker    `json:"servers" form:"servers"`
-}
-
-// JobSettings contains the processing parameters of a job
-type JobSettings struct {
-	Range                    JobRange `json:"range" form:"range" binding:"required"`
-	RequestTimeout           int      `json:"request_timeout_seconds" form:"request_timeout_seconds" binding:"required,min=1"`
-	MaxRetries               int      `json:"max_retries" form:"max_retries" binding:"min=0"`
-	GlobalRateLimitRPS       int      `json:"global_rate_limit_rps" form:"global_rate_limit_rps" binding:"min=0"`
-	StopOnConsecutiveMissing int      `json:"stop_on_consecutive_missing" form:"stop_on_consecutive_missing" binding:"min=0"`
-}
-
-// JobRange is the inclusive range of identifiers a job processes
-type JobRange struct {
-	From int `json:"from" form:"from" binding:"required,min=0"`
-	To   int `json:"to" form:"to" binding:"required,min=0,gtefield=From"`
-}
-
+// Job statuses
 const (
 	JobStatusCreated    string = "created"
 	JobStatusValidating string = "validating"
@@ -60,36 +18,83 @@ const (
 	JobStatusFailed     string = "failed"
 )
 
-// Update applies the non-nil fields of an update to a job
-func (j *Job) Update(u JobUpdate) {
-	if u.Name != nil {
-		j.Config.Name = *u.Name
-	}
-	if u.Job != nil {
-		j.Config.Job = *u.Job
-	}
+// Job is a scraping task and its current state
+type Job struct {
+	ID         int       `json:"id" form:"id" binding:"omitempty,min=1"`
+	Config     JobConfig `json:"config" form:"config" binding:"required"`
+	Workers    []int     `json:"workers" form:"workers" binding:"omitempty"`
+	Status     string    `json:"status" form:"status" binding:"required,oneof=created validating running pausing paused stopping stopped completed failed"`
+	Paused     bool      `json:"paused" form:"paused" binding:"omitempty"`
+	Expiration time.Time `json:"expiration" form:"expiration" binding:"omitempty"`
 }
 
-// AddWorker attaches a worker to the job
-// It returns false when the worker is already attached
-func (j *Job) AddWorker(w *Worker) bool {
-	for _, iw := range j.workers {
-		if iw.WorkerID() == w.WorkerID() {
-			return false
-		}
-	}
-	j.workers = append(j.workers, w)
-	return true
+// JobConfig contains configuration of a job
+type JobConfig struct {
+	Name                     string         `json:"name" form:"name" binding:"required"`
+	Range                    JobRange       `json:"range" form:"range" binding:"required"`
+	RequestTimeout           int            `json:"request_timeout_seconds" form:"request_timeout_seconds" binding:"omitempty,gt=0"`
+	MaxTries                 int            `json:"max_tries" form:"max_retries" binding:"omitempty,min=0"`
+	GlobalRateLimitRPS       int            `json:"global_rate_limit_rps" form:"global_rate_limit_rps" binding:"omitempty,min=0"`
+	StopOnConsecutiveMissing int            `json:"stop_on_consecutive_missing" form:"stop_on_consecutive_missing" binding:"omitempty,min=0"`
+	Servers                  []WorkerConfig `json:"servers" form:"servers" binding:"omitempty"`
 }
 
-// RemoveWorker detaches a worker from the job
-// It returns false when the worker wasn't attached
-func (j *Job) RemoveWorker(id int) bool {
-	for i, iw := range j.workers {
-		if iw.WorkerID() == id {
-			j.workers = append(j.workers[:i], j.workers[i+1:]...)
-			return true
-		}
+// JobRange is the inclusive range of identifiers a job processes
+type JobRange struct {
+	From int `json:"from" form:"from" binding:"omitempty,min=0"`
+	To   int `json:"to" form:"to" binding:"omitempty,gtefield=From"`
+}
+
+// Range is a contiguous block of identifiers leased to a single worker
+type Range struct {
+	ID             int       `json:"id" form:"id" binding:"required,min=1"`
+	JobID          int       `json:"job_id" form:"job_id" binding:"required,min=1"`
+	RangeStart     int       `json:"range_start" form:"range_start" binding:"required,min=0"`
+	RangeEnd       int       `json:"range_end" form:"range_end" binding:"required,gtefield=RangeStart"`
+	NextID         int       `json:"next_id" form:"next_id" binding:"omitempty,gtefield=RangeStart"`
+	Status         string    `json:"status" form:"status" binding:"required,oneof=created validating running pausing paused stopping stopped completed failed"`
+	LeasedBy       int       `json:"leased_by" form:"leased_by" binding:"omitempty,min=0"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at" form:"lease_expires_at" binding:"omitempty"`
+	Attempt        int       `json:"attempt" form:"attempt" binding:"omitempty,min=0"`
+	CreatedAt      time.Time `json:"created_at" form:"created_at" binding:"required"`
+	UpdatedAt      time.Time `json:"updated_at" form:"updated_at" binding:"required"`
+}
+
+// AssignWorkers assignes workers passed as variadic arguments
+func (j *Job) AssignWorkers(ws ...int) {
+	j.DeassignWorkers(ws...)
+	j.Workers = append(j.Workers, ws...)
+}
+
+// DeassignWorkers deassignes workers passed as variadic arguments
+func (j *Job) DeassignWorkers(ws ...int) {
+	if len(ws) == 0 {
+		j.Workers = []int{}
+		return
 	}
-	return false
+
+	wss := make(map[int]struct{})
+	for _, w := range ws {
+		wss[w] = struct{}{}
+	}
+
+	j.Workers = slices.DeleteFunc(j.Workers, func(w int) bool {
+		_, ok := wss[w]
+		return ok
+	})
+}
+
+// Leased reports whether the range is currently assigned to a worker
+func (r *Range) Leased() bool {
+	return r.LeasedBy != -1
+}
+
+// LeaseExpired reports whether the range's lease is no longer valid
+func (r *Range) LeaseExpired(now time.Time) bool {
+	return r.Leased() && !r.LeaseExpiresAt.IsZero() && !now.Before(r.LeaseExpiresAt)
+}
+
+// Exhausted reports whether every identifier of the range was processed
+func (r *Range) Exhausted() bool {
+	return r.NextID > r.RangeEnd
 }

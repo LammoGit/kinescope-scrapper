@@ -6,7 +6,6 @@ import (
 
 type Storage interface {
 	repos.IJobRepository
-	repos.IRangeRepository
 	repos.IWorkerRepository
 	repos.IVideoRepository
 	repos.IEventRepository

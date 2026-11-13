@@ -14,13 +14,13 @@ import (
 
 // Errors
 var (
-	ErrSignatureAuthenticationOnNonWorkerRoute = utility.NewInternalError("Failed due to signature authentication on non-worker route")
-	ErrInvalidUserID                           = utility.NewValidationError("Validation failed due to userId not being a valid integer")
-	ErrNonIntegerWorkerId                      = utility.NewValidationError("Validation failed due to workerId not being a valid integer")
+	ErrSignatureAuthenticationOnNonWorkerRoute = utility.NewInternalError("failed due to signature authentication on non-worker route")
+	ErrInvalidUserID                           = utility.NewValidationError("validation failed due to user id not being a valid integer")
+	ErrInvalidWorkerID                         = utility.NewValidationError("validation failed due to worker id not being a valid integer")
 )
 
 // bearerAuthMiddleware
-func bearerAuthMiddleware(app *app.App, roles ...domain.UserRole) gin.HandlerFunc {
+func bearerAuthMiddleware(app *app.App, roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
@@ -29,7 +29,7 @@ func bearerAuthMiddleware(app *app.App, roles ...domain.UserRole) gin.HandlerFun
 			return
 		}
 
-		claims, err := app.Crypto.ParseToken(strings.TrimPrefix(authHeader, "Bearer "))
+		claims, err := app.Crypto.ParseUserToken(strings.TrimPrefix(authHeader, "Bearer "))
 		if err != nil {
 			utility.SendError(c, err)
 			return
@@ -38,7 +38,7 @@ func bearerAuthMiddleware(app *app.App, roles ...domain.UserRole) gin.HandlerFun
 			for _, r := range roles {
 				if r == claims.UserRole {
 					c.Set("userID", claims.UserID)
-					c.Set("userRole", claims.UserRole)
+					c.Set("userRole", string(claims.UserRole))
 					c.Next()
 					return
 				}
@@ -47,7 +47,7 @@ func bearerAuthMiddleware(app *app.App, roles ...domain.UserRole) gin.HandlerFun
 			return
 		}
 		c.Set("userID", claims.UserID)
-		c.Set("userRole", claims.UserRole)
+		c.Set("userRole", string(claims.UserRole))
 		c.Next()
 	}
 }
@@ -65,11 +65,12 @@ func signatureAuthMiddleware(app *app.App) gin.HandlerFunc {
 
 		workerId, err := strconv.Atoi(workerIdS)
 		if err != nil {
-			utility.SendError(c, ErrNonIntegerWorkerId)
+			utility.SendError(c, ErrInvalidWorkerID)
 			return
 		}
+		c.Set("workerID", workerId)
 
-		pubKey, err := app.Worker.GetWorkerSignatureKeyByID(workerId)
+		pubKey, err := app.Worker.GetWorkerSignatureKeyByID(c.Request.Context(), workerId)
 		if err != nil {
 			utility.SendError(c, err)
 			return
@@ -114,22 +115,13 @@ func signatureAuthMiddleware(app *app.App) gin.HandlerFunc {
 }
 
 // userOrAdminMiddleware
+// Must be used only after bearerAuthMiddleware
 func userOrAdminMiddleware(app *app.App) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			c.Header("WWW-Authenticate", "Bearer")
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		}
+		userRole := c.GetString("userRole")
+		userID := c.GetInt("userID")
 
-		claims, err := app.Crypto.ParseToken(strings.TrimPrefix(authHeader, "Bearer "))
-		if err != nil {
-			utility.SendError(c, err)
-			return
-		}
-
-		if claims.UserRole == domain.UserRoleAdministrator {
+		if userRole == domain.UserRoleAdministrator {
 			c.Next()
 			return
 		}
@@ -139,7 +131,7 @@ func userOrAdminMiddleware(app *app.App) gin.HandlerFunc {
 			utility.SendError(c, ErrInvalidUserID)
 			return
 		}
-		if claims.UserID != pathID {
+		if userID != pathID {
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}

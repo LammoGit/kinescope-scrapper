@@ -12,7 +12,8 @@ import (
 )
 
 func LoadStreamRouter(router gin.IRouter, app *app.App) {
-	router.GET("/workers", func(c *gin.Context) {
+	// Channel for worker to receive commands
+	router.GET("/workers/commands", func(c *gin.Context) {
 		var topics []string
 		workerIds, ok := c.GetQueryArray("workers")
 		if !ok {
@@ -29,7 +30,27 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) { return nil, false })
 	})
 
-	router.GET("/metrics/workers", func(c *gin.Context) {
+	// Channel for user to receive worker updates
+	router.GET("/workers/updates", func(c *gin.Context) {
+		var topics []string
+		workerIds, ok := c.GetQueryArray("workers")
+		if !ok {
+			topics = []string{"metrics-worker-*"}
+		} else {
+			for _, id := range workerIds {
+				if _, err := strconv.Atoi(id); err != nil {
+					c.AbortWithStatus(http.StatusBadRequest)
+					return
+				}
+				topics = append(topics, fmt.Sprintf("metrics-worker-%s", id))
+			}
+		}
+		// IN DEVELOPMENT
+		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) { return nil, false })
+	})
+
+	// Channel for user to receive worker metrics
+	router.GET("/workers/metrics", func(c *gin.Context) {
 		var topics []string
 		workerIds, ok := c.GetQueryArray("workers")
 		if !ok {
@@ -44,20 +65,48 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 			}
 		}
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
+			ctx := c.Request.Context()
 			var msgs []sse.SSEMessage
 			for _, topic := range topics {
 				if topic == "metrics-worker-*" {
-					return []sse.SSEMessage{{Event: topic, Data: app.Telemetry.GetWorkersMetrics()}}, true
+					metrics, err := app.Telemetry.GetWorkersMetrics(ctx)
+					if err != nil {
+						return nil, false
+					}
+					return []sse.SSEMessage{{Event: "worker.metrics", Data: metrics}}, true
 				}
 				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "metrics-worker-"))
-				metrics, _ := app.Telemetry.GetWorkerMetricsByID(id)
-				msgs = append(msgs, sse.SSEMessage{Event: topic, Data: metrics})
+				metrics, err := app.Telemetry.GetWorkerMetricsByID(ctx, id)
+				if err != nil {
+					continue
+				}
+				msgs = append(msgs, sse.SSEMessage{Event: "worker.metrics", Data: metrics})
 			}
 			return msgs, true
 		})
 	})
 
-	router.GET("/metrics/jobs", func(c *gin.Context) {
+	// Channel for user to receive job updates
+	router.GET("/jobs/updates", func(c *gin.Context) {
+		var topics []string
+		jobIds, ok := c.GetQueryArray("jobs")
+		if !ok {
+			topics = []string{"metrics-job-*"}
+		} else {
+			for _, id := range jobIds {
+				if _, err := strconv.Atoi(id); err != nil {
+					c.AbortWithStatus(http.StatusBadRequest)
+					return
+				}
+				topics = append(topics, fmt.Sprintf("metrics-job-%s", id))
+			}
+		}
+		// IN DEVELOPMENT
+		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) { return nil, false })
+	})
+
+	// Channel for user to receive job metrics
+	router.GET("/jobs/metrics", func(c *gin.Context) {
 		var topics []string
 		jobIds, ok := c.GetQueryArray("jobs")
 		if !ok {
@@ -72,19 +121,28 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 			}
 		}
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
+			ctx := c.Request.Context()
 			var msgs []sse.SSEMessage
 			for _, topic := range topics {
 				if topic == "metrics-job-*" {
-					return []sse.SSEMessage{{Event: topic, Data: app.Telemetry.GetJobsMetrics()}}, true
+					metrics, err := app.Telemetry.GetJobsMetrics(ctx)
+					if err != nil {
+						return nil, false
+					}
+					return []sse.SSEMessage{{Event: "job.metrics", Data: metrics}}, true
 				}
-				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "metrics-job-"))
-				metrics, _ := app.Telemetry.GetJobMetricsByID(id)
+				id, _ := strconv.Atoi(strings.TrimPrefix("job.metrics", "metrics-job-"))
+				metrics, err := app.Telemetry.GetJobMetricsByID(ctx, id)
+				if err != nil {
+					continue
+				}
 				msgs = append(msgs, sse.SSEMessage{Event: topic, Data: metrics})
 			}
 			return msgs, true
 		})
 	})
 
+	// Channel for user to receive events
 	router.GET("/events", func(c *gin.Context) {
 		var topics []string
 		jobIds := c.QueryArray("jobs")
@@ -101,19 +159,30 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 		}
 
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
+			ctx := c.Request.Context()
 			var msgs []sse.SSEMessage
 			for _, topic := range topics {
 				if topic == "events-*" {
-					return []sse.SSEMessage{{Event: topic, Data: app.Event.GetEvents()}}, true
+					events, err := app.Event.GetEvents(ctx)
+					if err != nil {
+						return nil, false
+					}
+					return []sse.SSEMessage{{Event: "event", Data: events}}, true
 				}
 				if strings.HasPrefix(topic, "events-job-") {
 					id, _ := strconv.Atoi(strings.TrimPrefix(topic, "events-job-"))
-					events, _ := app.Event.GetEventsByJobID(id)
-					msgs = append(msgs, sse.SSEMessage{Event: topic, Data: events})
+					events, err := app.Event.GetEventsByJobID(ctx, id)
+					if err != nil {
+						continue
+					}
+					msgs = append(msgs, sse.SSEMessage{Event: "event", Data: events})
 				} else if strings.HasPrefix(topic, "events-worker-") {
 					id, _ := strconv.Atoi(strings.TrimPrefix(topic, "events-worker-"))
-					events, _ := app.Event.GetEventsByWorkerID(id)
-					msgs = append(msgs, sse.SSEMessage{Event: topic, Data: events})
+					events, err := app.Event.GetEventsByWorkerID(ctx, id)
+					if err != nil {
+						continue
+					}
+					msgs = append(msgs, sse.SSEMessage{Event: "event", Data: events})
 				}
 			}
 			return msgs, true

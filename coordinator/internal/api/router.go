@@ -1,18 +1,17 @@
 package api
 
 import (
-	st "coordinator/internal/storage"
-	"coordinator/pkg/sse"
+	"coordinator/internal/app"
 
 	"github.com/gin-gonic/gin"
 )
 
-// LoadRouter loads API routes into a given router.
-func LoadRouter(router gin.IRouter, hub *sse.Hub, storage st.Storage) {
-	LoadJobsRouter(router.Group("/jobs"), hub, storage)
-	LoadWorkersRouter(router.Group("/workers"), hub, storage)
-	LoadSSHRouter(router.Group("/ssh"), hub, storage)
-	LoadStreamRouter(router.Group("/stream"), hub, storage)
-	LoadUsersRouter(router.Group("/users"), hub, storage)
-	LoadServiceRouter(router.Group("/service"), hub, storage)
+// LoadRouter loads API routes into a given router
+func LoadRouter(router gin.IRouter, app *app.App) {
+	LoadJobsRouter(router.Group("/jobs"), app)
+	LoadWorkersRouter(router.Group("/workers"), app)
+	LoadSSHRouter(router.Group("/ssh"), app)
+	LoadStreamRouter(router.Group("/stream"), app)
+	LoadUsersRouter(router.Group("/users"), app)
+	LoadServiceRouter(router.Group("/service"), app)
 }

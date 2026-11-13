@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"coordinator/internal/services"
 	st "coordinator/internal/storage"
 	"coordinator/pkg/sse"
@@ -12,17 +13,16 @@ type App struct {
 	Hub          *sse.Hub
 	Provisioning *services.ProvisioningService
 	Crypto       *services.CryptoService
-	Scheduler    *services.SchedulerService
 	User         *services.UserService
 	Worker       *services.WorkerService
 	Job          *services.JobService
 	Event        *services.EventService
-	Range        *services.RangeService
 	Video        *services.VideoService
 	Telemetry    *services.TelemetryService
+	ctx          context.Context
 }
 
-func New(hub *sse.Hub, storage st.Storage) *App {
+func New(ctx context.Context, hub *sse.Hub, storage st.Storage) *App {
 	var cryptoService *services.CryptoService
 
 	secret := os.Getenv("JWT_SECRET")
@@ -32,6 +32,7 @@ func New(hub *sse.Hub, storage st.Storage) *App {
 	argonThreads := os.Getenv("ARGON2_THREADS")
 	keyLen := os.Getenv("PASSWORD_HASH_LEN")
 	saltSize := os.Getenv("SALT_SIZE")
+	s3URL := os.Getenv("S3_SERVER_URL")
 
 	provisioningService, _ := services.NewProvisioningService()
 
@@ -55,19 +56,15 @@ func New(hub *sse.Hub, storage st.Storage) *App {
 		cryptoService, _ = services.NewCryptoService([]byte(secret), issuer, opts...)
 	}
 
-	schedulerService, _ := services.NewSchedulerService(storage)
-
 	userService, _ := services.NewUserService(storage)
 
 	workerService, _ := services.NewWorkerService(hub, storage)
 
-	jobService, _ := services.NewJobService(hub, storage)
+	jobService, _ := services.NewJobService(ctx, hub, storage)
 
 	eventService, _ := services.NewEventService(hub, storage)
 
-	rangeService, _ := services.NewRangeService(storage)
-
-	videoService, _ := services.NewVideoService(storage)
+	videoService, _ := services.NewVideoService(storage, s3URL)
 
 	telemetryService, _ := services.NewTelemetryService(hub, storage)
 
@@ -75,13 +72,12 @@ func New(hub *sse.Hub, storage st.Storage) *App {
 		Hub:          hub,
 		Provisioning: provisioningService,
 		Crypto:       cryptoService,
-		Scheduler:    schedulerService,
 		User:         userService,
 		Worker:       workerService,
 		Job:          jobService,
 		Event:        eventService,
-		Range:        rangeService,
 		Video:        videoService,
 		Telemetry:    telemetryService,
+		ctx:          ctx,
 	}
 }

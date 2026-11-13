@@ -1,10 +1,11 @@
 package main
 
 import (
+	"context"
 	"coordinator/internal/api"
-	"coordinator/internal/api/stream"
-	jdist "coordinator/internal/job-distributor"
+	"coordinator/internal/app"
 	st "coordinator/internal/storage"
+	"coordinator/pkg/sse"
 	"flag"
 	"fmt"
 
@@ -23,13 +24,6 @@ func validateFlags() error {
 	return nil
 }
 
-// Global variables
-var jd = jdist.New()
-var servers = &st.Servers{
-	Servers: make(map[string]*st.Server),
-}
-var hub = stream.NewHub()
-
 func main() {
 	// Parse and validate the flags
 	flag.Parse()
@@ -38,12 +32,18 @@ func main() {
 		return
 	}
 
+	ctx := context.Background()
+
+	hub := sse.NewHub()
+	storage := st.NewMemoryStorage()
+	app := app.New(ctx, hub, storage)
+
 	// Create a new router and assign it the Recovery middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
 
 	// Load API routes
-	api.LoadRouter(router.Group("/api"), hub, jd, servers)
+	api.LoadRouter(router.Group("/api"), app)
 
 	// Run server on the given port
 	router.Run(fmt.Sprintf(":%d", *port))
