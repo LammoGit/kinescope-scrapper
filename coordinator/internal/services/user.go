@@ -10,7 +10,7 @@ import (
 // Errors
 var (
 	ErrUserStorageUnavailable = utility.NewInternalError("user storage is not configured")
-	ErrBadCredentials         = utility.NewInternalError("")
+	ErrBadCredentials         = utility.NewInternalError("invalid credentials were generated during registration")
 )
 
 // UserService exposes user account operations on top of the storage layer
