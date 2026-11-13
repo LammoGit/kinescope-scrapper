@@ -26,6 +26,15 @@ func NewProvisioningService() (*ProvisioningService, error) {
 // Setup connects to the worker host over SSH
 // It returns the worker's public key
 func (s *ProvisioningService) Setup(ctx context.Context, sshHost string, sshPort int, sshUser, password, storagePath string) (ed25519.PublicKey, error) {
+	// IN DEVELOPMENT
+	// Provisioning service must
+	// - connect via SSH
+	// - generate SSH ed25519 keys
+	// - save SSH ed25519 public key in file using sshKey path
+	// - upload agent zip archive with venv and code
+	// - disarchivate it
+	// - source venv
+	// - run code
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

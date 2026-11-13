@@ -303,6 +303,9 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 
 	// Get upload link for video download
 	worker.POST("/:workerId/upload/:resourceId", func(c *gin.Context) {
+		// IN DEVELOPMENT
+		// Should make keys for S3 storage using VideoService, not CryptoService
+
 		workerID, err := strconv.Atoi(c.Param("workerId"))
 		if err != nil {
 			utility.SendError(c, ErrInvalidWorkerID)

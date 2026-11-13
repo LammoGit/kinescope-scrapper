@@ -25,6 +25,8 @@ func NewVideoService(storage st.Storage, s3URL string) (*VideoService, error) {
 	if storage == nil {
 		return nil, ErrVideoStorageUnavailable
 	}
+	// IN DEVELOPMENT
+	// Requires S3 storage upstream link forging
 	return &VideoService{storage: storage, s3URL: s3URL}, nil
 }
 

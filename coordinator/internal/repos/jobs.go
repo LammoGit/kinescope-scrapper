@@ -318,6 +318,8 @@ func (jr *JobRepository) GetRangeByID(ctx context.Context, id int) (domain.Range
 
 // GetRangesByJobID returns all ranges belonging to a job ordered by start
 func (jr *JobRepository) GetRangesByJobID(ctx context.Context, jobID int) ([]domain.Range, error) {
+	// IN DEVELOPMENT
+	// Search for free ranges or create new ones if job isn't finished
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -342,6 +344,8 @@ func (jr *JobRepository) GetRangesByJobID(ctx context.Context, jobID int) ([]dom
 
 // GetUnassignedRanges returns ranges that are ready to be leased
 func (jr *JobRepository) GetUnassignedRanges(ctx context.Context) ([]domain.Range, error) {
+	// IN DEVELOPMENT
+	// Remove and use only GetRangesByJobID
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
