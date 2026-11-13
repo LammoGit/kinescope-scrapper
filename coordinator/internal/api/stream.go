@@ -2,6 +2,7 @@ package api
 
 import (
 	"coordinator/internal/app"
+	"coordinator/internal/domain"
 	"coordinator/pkg/sse"
 	"fmt"
 	"net/http"
@@ -35,18 +36,36 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 		var topics []string
 		workerIds, ok := c.GetQueryArray("workers")
 		if !ok {
-			topics = []string{"metrics-worker-*"}
+			topics = []string{"worker-update-*"}
 		} else {
 			for _, id := range workerIds {
 				if _, err := strconv.Atoi(id); err != nil {
 					c.AbortWithStatus(http.StatusBadRequest)
 					return
 				}
-				topics = append(topics, fmt.Sprintf("metrics-worker-%s", id))
+				topics = append(topics, fmt.Sprintf("worker-update-%s", id))
 			}
 		}
-		// IN DEVELOPMENT
-		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) { return nil, false })
+		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
+			ctx := c.Request.Context()
+			var msgs []sse.SSEMessage
+			for _, topic := range topics {
+				if topic == "worker-update-*" {
+					workers, err := app.Worker.GetWorkers(ctx)
+					if err != nil {
+						return nil, false
+					}
+					return []sse.SSEMessage{{Event: "worker.update", Data: workers}}, true
+				}
+				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "worker-update-"))
+				worker, err := app.Worker.GetWorkerByID(ctx, id)
+				if err != nil {
+					continue
+				}
+				msgs = append(msgs, sse.SSEMessage{Event: "worker.update", Data: []domain.Worker{worker}})
+			}
+			return msgs, true
+		})
 	})
 
 	// Channel for user to receive worker metrics
@@ -54,33 +73,33 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 		var topics []string
 		workerIds, ok := c.GetQueryArray("workers")
 		if !ok {
-			topics = []string{"metrics-worker-*"}
+			topics = []string{"worker-metrics-*"}
 		} else {
 			for _, id := range workerIds {
 				if _, err := strconv.Atoi(id); err != nil {
 					c.AbortWithStatus(http.StatusBadRequest)
 					return
 				}
-				topics = append(topics, fmt.Sprintf("metrics-worker-%s", id))
+				topics = append(topics, fmt.Sprintf("worker-metrics-%s", id))
 			}
 		}
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
 			ctx := c.Request.Context()
 			var msgs []sse.SSEMessage
 			for _, topic := range topics {
-				if topic == "metrics-worker-*" {
+				if topic == "worker-metrics-*" {
 					metrics, err := app.Telemetry.GetWorkersMetrics(ctx)
 					if err != nil {
 						return nil, false
 					}
 					return []sse.SSEMessage{{Event: "worker.metrics", Data: metrics}}, true
 				}
-				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "metrics-worker-"))
+				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "worker-metrics-"))
 				metrics, err := app.Telemetry.GetWorkerMetricsByID(ctx, id)
 				if err != nil {
 					continue
 				}
-				msgs = append(msgs, sse.SSEMessage{Event: "worker.metrics", Data: metrics})
+				msgs = append(msgs, sse.SSEMessage{Event: "worker.metrics", Data: []domain.Metrics{metrics}})
 			}
 			return msgs, true
 		})
@@ -91,18 +110,36 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 		var topics []string
 		jobIds, ok := c.GetQueryArray("jobs")
 		if !ok {
-			topics = []string{"metrics-job-*"}
+			topics = []string{"job-metrics-*"}
 		} else {
 			for _, id := range jobIds {
 				if _, err := strconv.Atoi(id); err != nil {
 					c.AbortWithStatus(http.StatusBadRequest)
 					return
 				}
-				topics = append(topics, fmt.Sprintf("metrics-job-%s", id))
+				topics = append(topics, fmt.Sprintf("job-metrics-%s", id))
 			}
 		}
-		// IN DEVELOPMENT
-		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) { return nil, false })
+		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
+			ctx := c.Request.Context()
+			var msgs []sse.SSEMessage
+			for _, topic := range topics {
+				if topic == "job-update-*" {
+					jobs, err := app.Job.GetJobs(ctx)
+					if err != nil {
+						return nil, false
+					}
+					return []sse.SSEMessage{{Event: "job.update", Data: jobs}}, true
+				}
+				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "job-update-"))
+				job, err := app.Job.GetJobByID(ctx, id)
+				if err != nil {
+					continue
+				}
+				msgs = append(msgs, sse.SSEMessage{Event: "job.update", Data: []domain.Job{job}})
+			}
+			return msgs, true
+		})
 	})
 
 	// Channel for user to receive job metrics
@@ -110,33 +147,33 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 		var topics []string
 		jobIds, ok := c.GetQueryArray("jobs")
 		if !ok {
-			topics = []string{"metrics-job-*"}
+			topics = []string{"job-metrics-*"}
 		} else {
 			for _, id := range jobIds {
 				if _, err := strconv.Atoi(id); err != nil {
 					c.AbortWithStatus(http.StatusBadRequest)
 					return
 				}
-				topics = append(topics, fmt.Sprintf("metrics-job-%s", id))
+				topics = append(topics, fmt.Sprintf("job-metrics-%s", id))
 			}
 		}
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
 			ctx := c.Request.Context()
 			var msgs []sse.SSEMessage
 			for _, topic := range topics {
-				if topic == "metrics-job-*" {
+				if topic == "job-metrics-*" {
 					metrics, err := app.Telemetry.GetJobsMetrics(ctx)
 					if err != nil {
 						return nil, false
 					}
 					return []sse.SSEMessage{{Event: "job.metrics", Data: metrics}}, true
 				}
-				id, _ := strconv.Atoi(strings.TrimPrefix("job.metrics", "metrics-job-"))
+				id, _ := strconv.Atoi(strings.TrimPrefix("job.metrics", "job-metrics-"))
 				metrics, err := app.Telemetry.GetJobMetricsByID(ctx, id)
 				if err != nil {
 					continue
 				}
-				msgs = append(msgs, sse.SSEMessage{Event: topic, Data: metrics})
+				msgs = append(msgs, sse.SSEMessage{Event: topic, Data: []domain.Metrics{metrics}})
 			}
 			return msgs, true
 		})
@@ -169,15 +206,15 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 					}
 					return []sse.SSEMessage{{Event: "event", Data: events}}, true
 				}
-				if strings.HasPrefix(topic, "events-job-") {
-					id, _ := strconv.Atoi(strings.TrimPrefix(topic, "events-job-"))
+				if ids, ok := strings.CutPrefix(topic, "events-job-"); ok {
+					id, _ := strconv.Atoi(ids)
 					events, err := app.Event.GetEventsByJobID(ctx, id)
 					if err != nil {
 						continue
 					}
 					msgs = append(msgs, sse.SSEMessage{Event: "event", Data: events})
-				} else if strings.HasPrefix(topic, "events-worker-") {
-					id, _ := strconv.Atoi(strings.TrimPrefix(topic, "events-worker-"))
+				} else if ids, ok := strings.CutPrefix(topic, "events-worker-"); ok {
+					id, _ := strconv.Atoi(ids)
 					events, err := app.Event.GetEventsByWorkerID(ctx, id)
 					if err != nil {
 						continue
