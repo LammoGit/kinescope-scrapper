@@ -31,7 +31,7 @@ func NewWorkerService(hub *sse.Hub, storage st.Storage) (*WorkerService, error) 
 }
 
 // CreateWorker registers a new worker and returns it
-func (s *WorkerService) CreateWorker(ctx context.Context, host string, port int, user string, pubKey ed25519.PublicKey, storagePath string, minFreeSpaceGB int) (domain.Worker, error) {
+func (s *WorkerService) CreateWorker(ctx context.Context, host string, port int, user string, pubKey ed25519.PublicKey, threads int, storagePath string, minFreeSpaceGB int) (domain.Worker, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Worker{}, err
 	}
@@ -42,6 +42,7 @@ func (s *WorkerService) CreateWorker(ctx context.Context, host string, port int,
 			Host:           host,
 			SSHPort:        port,
 			SSHUser:        user,
+			Threads:        threads,
 			StoragePath:    storagePath,
 			MinFreeSpaceGB: minFreeSpaceGB,
 		},

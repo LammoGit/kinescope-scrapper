@@ -36,7 +36,11 @@ func main() {
 	ctx := context.Background()
 
 	hub := sse.NewHub()
-	storage := st.NewStorage()
+	storage, err := st.NewStorage()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(2)
+	}
 	app, err := app.New(ctx, hub, storage)
 	if err != nil {
 		fmt.Println(err)

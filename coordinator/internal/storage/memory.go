@@ -17,7 +17,7 @@ type Memory struct {
 }
 
 // NewStorage creates a fully initialized in-memory storage
-func NewStorage() *Memory {
+func NewStorage() (Storage, error) {
 	return &Memory{
 		JobRepository:       repos.NewJobRepository(),
 		WorkerRepository:    repos.NewWorkerRepository(),
@@ -25,5 +25,5 @@ func NewStorage() *Memory {
 		EventRepository:     repos.NewEventRepository(),
 		UserRepository:      repos.NewUserRepository(),
 		TelemetryRepository: repos.NewTelemetryRepository(),
-	}
+	}, nil
 }

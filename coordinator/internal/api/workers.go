@@ -62,6 +62,7 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 			payload.SSHPort,
 			payload.SSHUser,
 			pubKey,
+			payload.Threads,
 			payload.StoragePath,
 			payload.MinFreeSpaceGB,
 		)
