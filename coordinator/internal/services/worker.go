@@ -31,20 +31,13 @@ func NewWorkerService(hub *sse.Hub, storage st.Storage) (*WorkerService, error) 
 }
 
 // CreateWorker registers a new worker and returns it
-func (s *WorkerService) CreateWorker(ctx context.Context, host string, port int, user string, pubKey ed25519.PublicKey, storagePath string, minFreeSpaceGB int) (domain.Worker, error) {
+func (s *WorkerService) CreateWorker(ctx context.Context, config domain.WorkerConfig, pubKey ed25519.PublicKey) (domain.Worker, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Worker{}, err
 	}
 
 	worker := domain.Worker{
-		Config: domain.WorkerConfig{
-			Name:           "worker",
-			Host:           host,
-			SSHPort:        port,
-			SSHUser:        user,
-			StoragePath:    storagePath,
-			MinFreeSpaceGB: minFreeSpaceGB,
-		},
+		Config:    config,
 		Status:    domain.WorkerStatusOff,
 		PublicKey: pubKey,
 	}

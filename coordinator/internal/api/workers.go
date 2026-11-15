@@ -49,7 +49,7 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 			payload.SSHPort,
 			payload.SSHUser,
 			payload.SSHPassword,
-			payload.StoragePath,
+			payload.SSHKey,
 		)
 		if err != nil {
 			utility.SendError(c, err)
@@ -58,12 +58,17 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 
 		worker, err := app.Worker.CreateWorker(
 			ctx,
-			payload.Host,
-			payload.SSHPort,
-			payload.SSHUser,
+			domain.WorkerConfig{
+				Name:           payload.Name,
+				Host:           payload.Host,
+				SSHPort:        payload.SSHPort,
+				SSHUser:        payload.SSHUser,
+				SSHKey:         payload.SSHKey,
+				Threads:        payload.Threads,
+				StoragePath:    payload.StoragePath,
+				MinFreeSpaceGB: payload.MinFreeSpaceGB,
+			},
 			pubKey,
-			payload.StoragePath,
-			payload.MinFreeSpaceGB,
 		)
 		if err != nil {
 			utility.SendError(c, err)

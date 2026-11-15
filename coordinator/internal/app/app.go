@@ -5,8 +5,20 @@ import (
 	"coordinator/internal/services"
 	st "coordinator/internal/storage"
 	"coordinator/pkg/sse"
+	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+
+	"golang.org/x/crypto/ssh"
+)
+
+// Errors
+var (
+	ErrFailedToGetHomeDir    = errors.New("")
+	ErrFailedToReadPublicKey = errors.New("")
+	ErrInvalidPublicKey      = errors.New("")
 )
 
 type App struct {
@@ -37,11 +49,31 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) (*App, error) {
 	saltSize := os.Getenv("SALT_SIZE")
 	s3URL := os.Getenv("S3_SERVER_URL")
 
-	provisioningService, err := services.NewProvisioningService()
-	if err != nil {
-		return app, err
+	{
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, ErrFailedToGetHomeDir
+		}
+
+		pubKeyPath := filepath.Join(homeDir, ".ssh", "id_ed25519.pub")
+		pubBytes, err := os.ReadFile(pubKeyPath)
+		if err != nil {
+			return nil, ErrFailedToReadPublicKey
+		}
+
+		parsedPub, _, _, _, err := ssh.ParseAuthorizedKey(pubBytes)
+		if err != nil {
+			return nil, ErrInvalidPublicKey
+		}
+
+		pubKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsedPub)))
+
+		provisioningService, err := services.NewProvisioningService(pubKey)
+		if err != nil {
+			return app, err
+		}
+		app.Provisioning = provisioningService
 	}
-	app.Provisioning = provisioningService
 
 	{
 		var opts []services.CryptoOption

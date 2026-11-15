@@ -6,97 +6,169 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/povsister/scp"
 	"golang.org/x/crypto/ssh"
+)
+
+// Errors
+var (
+	ErrEmptyCoordinatorPublicKey = utility.NewInternalError("Coordinator key mustn't be empty")
+	ErrFailedToConnectViaSSH     = utility.NewConflictError("Failed to connect via ssh using provided data")
+	ErrFailedToEstablishSession  = utility.NewInternalError("Failed to establish an ssh session")
+	ErrFailedToGenerateSSHKeys   = utility.NewInternalError("Failed to generate keys")
+	ErrFailedToSaveKey           = utility.NewInternalError("Failed to save generated keys")
+	ErrFailedToAddTrusted        = utility.NewInternalError("Faield to add coordinator as a trusted client on the worker")
+	ErrFailedToConnectViaSCP     = utility.NewConflictError("Failed to connect via scp using provided data")
+	ErrFailedToStartAgent        = utility.NewInternalError("Failed to start an agent on the worker")
 )
 
 // ProvisioningService installs the worker key on a remote host over SSH
 type ProvisioningService struct {
-	timeout time.Duration
+	pubKey string
 }
 
 // NewProvisioningService creates a new ProvisioningService
-func NewProvisioningService() (*ProvisioningService, error) {
-	return &ProvisioningService{timeout: 15 * time.Second}, nil
+func NewProvisioningService(pubKey string) (*ProvisioningService, error) {
+	if pubKey == "" {
+		return nil, ErrEmptyCoordinatorPublicKey
+	}
+
+	return &ProvisioningService{
+		pubKey: pubKey,
+	}, nil
 }
 
 // Setup connects to the worker host over SSH
 // It returns the worker's public key
-func (s *ProvisioningService) Setup(ctx context.Context, sshHost string, sshPort int, sshUser, password, storagePath string) (ed25519.PublicKey, error) {
-	// IN DEVELOPMENT
-	// Provisioning service must
-	// - connect via SSH
-	// - generate SSH ed25519 keys
-	// - save SSH ed25519 public key in file using sshKey path
-	// - upload agent zip archive with venv and code
-	// - disarchivate it
-	// - source venv
-	// - run code
+func (s *ProvisioningService) Setup(ctx context.Context, sshHost string, sshPort int, sshUser, password, sshKey string) (ed25519.PublicKey, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	addr := net.JoinHostPort(sshHost, strconv.Itoa(sshPort))
-	dialer := net.Dialer{Timeout: s.timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, utility.NewInternalError(fmt.Sprintf("failed to connect to %s: %v", addr, err))
-	}
-
+	// connect via SSH
 	config := &ssh.ClientConfig{
 		User:            sshUser,
 		Auth:            []ssh.AuthMethod{ssh.Password(password)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         s.timeout,
 	}
-
-	clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	addr := net.JoinHostPort(sshHost, strconv.Itoa(sshPort))
+	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		_ = conn.Close()
-		return nil, utility.NewInternalError(fmt.Sprintf("failed to establish ssh connection to %s: %v", addr, err))
+		return nil, ErrFailedToConnectViaSSH
 	}
-	client := ssh.NewClient(clientConn, chans, reqs)
-	defer client.Close()
 
-	session, err := client.NewSession()
+	// Generate SSH ed25519 keys
+	keygenSession, err := client.NewSession()
 	if err != nil {
-		return nil, utility.NewInternalError(fmt.Sprintf("failed to open ssh session: %v", err))
+		return nil, ErrFailedToEstablishSession
 	}
-	defer session.Close()
+	defer keygenSession.Close()
 
-	keyPath := strings.TrimRight(storagePath, "/") + "/.worker_ed25519"
-	command := fmt.Sprintf(
-		`set -e; mkdir -p %s; if [ ! -f %s ]; then ssh-keygen -t ed25519 -N "" -f %s >/dev/null 2>&1; fi; cat %s.pub`,
-		shellQuote(storagePath),
-		shellQuote(keyPath),
-		shellQuote(keyPath),
-		shellQuote(keyPath),
+	cmd := `mkdir -p ~/.ssh && ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -q && cat ~/.ssh/id_ed25519.pub`
+
+	out, err := keygenSession.Output(cmd)
+	if err != nil {
+		return nil, ErrFailedToGenerateSSHKeys
+	}
+
+	publicKey := strings.TrimSpace(string(out))
+	edKey, err := parseToEd25519PublicKey([]byte(publicKey))
+	if err != nil {
+		return edKey, err
+	}
+
+	// Save SSH ed25519 public key in file using sshKey path
+	err = os.WriteFile(sshKey, edKey, 0644)
+	if err != nil {
+		return edKey, ErrFailedToSaveKey
+	}
+
+	// Add coordinator as trusted
+	authSession, err := client.NewSession()
+	if err != nil {
+		return edKey, ErrFailedToEstablishSession
+	}
+	defer authSession.Close()
+
+	coordAuthKey := s.pubKey
+
+	cmd = fmt.Sprintf(
+		`mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && grep -qxF %q ~/.ssh/authorized_keys || echo %q >> ~/.ssh/authorized_keys`,
+		coordAuthKey,
+		coordAuthKey,
 	)
 
-	out, err := session.Output(command)
-	if err != nil {
-		return nil, utility.NewInternalError(fmt.Sprintf("failed to provision worker key: %v", err))
+	if err := authSession.Run(cmd); err != nil {
+		return edKey, ErrFailedToAddTrusted
 	}
 
-	pub, _, _, _, err := ssh.ParseAuthorizedKey(out)
+	// Upload agent binary
+	scpClient, err := scp.NewClientFromExistingSSH(client, nil)
 	if err != nil {
-		return nil, utility.NewInternalError(fmt.Sprintf("worker returned an invalid public key: %v", err))
+		return edKey, ErrFailedToConnectViaSCP
 	}
-	cryptoPub, ok := pub.(ssh.CryptoPublicKey)
-	if !ok {
-		return nil, utility.NewInternalError("worker public key isn't a crypto key")
+	defer scpClient.Close()
+
+	localBinary := "./dist/agent"
+	remoteDir := "/opt/agent"
+	remoteBinary := "/opt/agent/agent"
+
+	prepSession, err := client.NewSession()
+	if err != nil {
+		return edKey, ErrFailedToEstablishSession
 	}
-	edPub, ok := cryptoPub.CryptoPublicKey().(ed25519.PublicKey)
-	if !ok {
-		return nil, utility.NewInternalError("worker public key isn't an ed25519 key")
+	_ = prepSession.Run(fmt.Sprintf("mkdir -p %q", remoteDir))
+	prepSession.Close()
+
+	err = scpClient.CopyFileToRemote(localBinary, remoteBinary, &scp.FileTransferOption{
+		Context:      ctx,
+		PreserveProp: true,
+	})
+	if err != nil {
+		return edKey, fmt.Errorf("failed to upload agent binary: %w", err)
 	}
-	return edPub, nil
+
+	// Run agent
+	runSession, err := client.NewSession()
+	if err != nil {
+		return edKey, ErrFailedToEstablishSession
+	}
+	defer runSession.Close()
+
+	runCmd := fmt.Sprintf(
+		`chmod +x %q && nohup %q > %q/agent.log 2>&1 < /dev/null &`,
+		remoteBinary,
+		remoteBinary,
+		remoteDir,
+	)
+	if err := runSession.Run(runCmd); err != nil {
+		return edKey, ErrFailedToStartAgent
+	}
+
+	return edKey, nil
+
 }
 
-// shellQuote quotes a string for safe use in a POSIX shell command.
-func shellQuote(v string) string {
-	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
+// parseToEd25519PublicKey parses given bytes into ed25519 public key
+func parseToEd25519PublicKey(authorizedKeyBytes []byte) (ed25519.PublicKey, error) {
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey(authorizedKeyBytes)
+	if err != nil {
+		return nil, ErrFailedToGenerateSSHKeys
+	}
+
+	cryptoPubKey, ok := pubKey.(ssh.CryptoPublicKey)
+	if !ok {
+		return nil, ErrFailedToGenerateSSHKeys
+	}
+
+	edKey, ok := cryptoPubKey.CryptoPublicKey().(ed25519.PublicKey)
+	if !ok {
+		return nil, ErrFailedToGenerateSSHKeys
+	}
+
+	return edKey, nil
 }
