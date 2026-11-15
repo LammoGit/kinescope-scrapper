@@ -2,3 +2,4 @@
 !openapi.yaml
 *.key
 *.crt
+AGENTS.md
