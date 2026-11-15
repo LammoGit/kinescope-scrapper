@@ -113,7 +113,7 @@ func (s *ProvisioningService) Setup(ctx context.Context, sshHost string, sshPort
 	}
 	defer scpClient.Close()
 
-	localBinary := "./dist/agent"
+	localBinary := "./agent"
 	remoteDir := "/opt/agent"
 	remoteBinary := "/opt/agent/agent"
 
