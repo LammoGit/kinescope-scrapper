@@ -3,3 +3,6 @@
 *.key
 *.crt
 AGENTS.md
+.env
+dist*
+build*
