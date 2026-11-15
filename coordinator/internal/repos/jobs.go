@@ -16,9 +16,10 @@ var _ IJobRepository = &JobRepository{}
 // Errors
 var (
 	ErrJobNotFoundByID   = utility.NewNotFoundError("job with given id doesn't exist")
-	ErrRangeNotFoundByID = utility.NewNotFoundError("range with given id doesn't exist.")
+	ErrRangeNotFoundByID = utility.NewNotFoundError("range with given id doesn't exist")
 	ErrRangeIsCompleted  = utility.NewConflictError("range is already completed")
 	ErrRangeIsTaken      = utility.NewConflictError("range is already taken")
+	ErrJobIsCompleted    = utility.NewConflictError("job is already completed")
 )
 
 // IJobRepository stores scraping jobs and their state
@@ -39,8 +40,7 @@ type IJobRepository interface {
 	AddRange(ctx context.Context, rangeBlock domain.Range) error
 	GetRangeByID(ctx context.Context, id int) (domain.Range, error)
 	GetRangesByJobID(ctx context.Context, jobID int) ([]domain.Range, error)
-	GetUnassignedRanges(ctx context.Context) ([]domain.Range, error)
-	TryClaimRange(ctx context.Context, rangeID, workerID int, leaseTTL time.Duration) error
+	TryClaimRange(ctx context.Context, workerID, jobID int, leaseTTL time.Duration) (domain.Range, error)
 	RenewLeases(ctx context.Context, workerID int, leaseTTL time.Duration) (int, error)
 	ReleaseRangeByID(ctx context.Context, rangeID int) error
 	ReleaseRangesByJobID(ctx context.Context, jobID int) error
@@ -91,6 +91,7 @@ func (jr *JobRepository) CreateJob(ctx context.Context, name string, config doma
 		Status: domain.JobStatusCreated,
 	}
 	jr.jobs[id] = job
+	jr.jobRanges[id] = make(map[int]struct{})
 
 	return job, nil
 }
@@ -176,6 +177,7 @@ func (jr *JobRepository) DeleteJob(ctx context.Context, id int) (domain.Job, err
 	}
 
 	delete(jr.jobs, id)
+	delete(jr.jobRanges, id)
 	return job, nil
 }
 
@@ -258,6 +260,9 @@ func (jr *JobRepository) StopJob(ctx context.Context, id int) (domain.Job, error
 	job.Paused = true
 	job.DeassignWorkers()
 	jr.jobs[id] = job
+	for rid := range jr.jobRanges[id] {
+		delete(jr.jobRanges, rid)
+	}
 	return job, nil
 }
 
@@ -287,26 +292,36 @@ func (jr *JobRepository) AddRange(ctx context.Context, rangeBlock domain.Range) 
 	jr.mu.Lock()
 	defer jr.mu.Unlock()
 
-	if rangeBlock.ID == 0 {
-		jr.nextRangeID++
-		rangeBlock.ID = jr.nextRangeID
-	} else if rangeBlock.ID > jr.nextRangeID {
-		jr.nextRangeID = rangeBlock.ID
+	if m, ok := jr.jobRanges[rangeBlock.JobID]; ok {
+		m[rangeBlock.ID] = struct{}{}
+	} else {
+		return ErrJobNotFoundByID
 	}
+
+	for _, r := range jr.ranges {
+		if r.RangeStart >= rangeBlock.RangeStart && rangeBlock.RangeStart <= r.RangeEnd {
+			return ErrRangeIsTaken
+		}
+		if r.RangeStart >= rangeBlock.RangeEnd && rangeBlock.RangeEnd <= r.RangeEnd {
+			return ErrRangeIsTaken
+		}
+	}
+
+	rangeBlock.ID = jr.nextRangeID
+	jr.nextRangeID++
 
 	now := time.Now()
 	if rangeBlock.CreatedAt.IsZero() {
 		rangeBlock.CreatedAt = now
 	}
-	if rangeBlock.NextID == 0 {
-		rangeBlock.NextID = rangeBlock.RangeStart
-	}
 	if rangeBlock.Status == "" {
 		rangeBlock.Status = domain.JobStatusCreated
 	}
 	rangeBlock.UpdatedAt = now
+	rangeBlock.LeasedBy = 0
 
 	jr.ranges[rangeBlock.ID] = rangeBlock
+
 	return nil
 }
 
@@ -328,8 +343,6 @@ func (jr *JobRepository) GetRangeByID(ctx context.Context, id int) (domain.Range
 
 // GetRangesByJobID returns all ranges belonging to a job ordered by start
 func (jr *JobRepository) GetRangesByJobID(ctx context.Context, jobID int) ([]domain.Range, error) {
-	// IN DEVELOPMENT
-	// Search for free ranges or create new ones if job isn't finished
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -352,64 +365,100 @@ func (jr *JobRepository) GetRangesByJobID(ctx context.Context, jobID int) ([]dom
 	return res, nil
 }
 
-// GetUnassignedRanges returns ranges that are ready to be leased
-func (jr *JobRepository) GetUnassignedRanges(ctx context.Context) ([]domain.Range, error) {
-	// IN DEVELOPMENT
-	// Remove and use only GetRangesByJobID
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	jr.mu.RLock()
-	defer jr.mu.RUnlock()
-
-	now := time.Now()
-	var res []domain.Range
-	for _, r := range jr.ranges {
-		if r.Status == domain.JobStatusCompleted || r.Status == domain.JobStatusStopped || r.Status == domain.JobStatusFailed {
-			continue
-		}
-		if !r.Leased() || r.LeaseExpired(now) {
-			res = append(res, r)
-		}
-	}
-	sort.Slice(res, func(i, j int) bool {
-		if res[i].JobID == res[j].JobID {
-			return res[i].RangeStart < res[j].RangeStart
-		}
-		return res[i].JobID < res[j].JobID
-	})
-	return res, nil
-}
-
 // TryClaimRange attempts to lease a range to a worker
-func (jr *JobRepository) TryClaimRange(ctx context.Context, rangeID, workerID int, leaseTTL time.Duration) error {
+func (jr *JobRepository) TryClaimRange(ctx context.Context, workerID, jobID int, leaseTTL time.Duration) (domain.Range, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Range{}, err
 	}
 
 	jr.mu.Lock()
 	defer jr.mu.Unlock()
 
-	r, ok := jr.ranges[rangeID]
+	job, ok := jr.jobs[jobID]
 	if !ok {
-		return ErrRangeNotFoundByID
+		return domain.Range{}, ErrJobNotFoundByID
 	}
-	if r.Status == domain.JobStatusCompleted || r.Status == domain.JobStatusStopped || r.Status == domain.JobStatusFailed {
-		return ErrRangeIsCompleted
+	if job.Status == domain.JobStatusCompleted {
+		return domain.Range{}, ErrJobIsCompleted
 	}
 
 	now := time.Now()
-	if r.Leased() && !r.LeaseExpired(now) {
-		return ErrRangeIsTaken
+
+	owned := make([]domain.Range, 0)
+	for _, r := range jr.ranges {
+		if r.JobID == jobID {
+			owned = append(owned, r)
+		}
+	}
+	sort.Slice(owned, func(i, j int) bool {
+		if owned[i].RangeStart == owned[j].RangeStart {
+			return owned[i].ID < owned[j].ID
+		}
+		return owned[i].RangeStart < owned[j].RangeStart
+	})
+
+	for _, r := range owned {
+		if r.Status == domain.JobStatusCompleted || r.Exhausted() {
+			continue
+		}
+		if !r.LeaseExpired(now) {
+			continue
+		}
+		r.LeasedBy = workerID
+		r.LeaseExpiresAt = now.Add(leaseTTL)
+		r.Status = domain.JobStatusRunning
+		r.UpdatedAt = now
+		jr.ranges[r.ID] = r
+		return r, nil
 	}
 
-	r.LeasedBy = workerID
-	r.LeaseExpiresAt = now.Add(leaseTTL)
-	r.Status = domain.JobStatusRunning
-	r.UpdatedAt = now
-	jr.ranges[r.ID] = r
-	return nil
+	cursor := job.Config.Range.From
+	gapEnd := job.Config.Range.To
+	for _, r := range owned {
+		if r.RangeStart > cursor {
+			gapEnd = r.RangeStart - 1
+			break
+		}
+		if r.RangeEnd >= cursor {
+			cursor = r.RangeEnd + 1
+		}
+	}
+	if cursor > job.Config.Range.To {
+		return domain.Range{}, ErrRangeIsTaken
+	}
+
+	gapSize := gapEnd - cursor + 1
+	maxSize := 1000
+	var size int
+	switch {
+	case gapSize <= maxSize:
+		size = gapSize
+	case gapSize < 2*maxSize:
+		size = gapSize / 2
+	default:
+		size = maxSize
+	}
+	end := cursor + size - 1
+
+	jr.nextRangeID++
+	carved := domain.Range{
+		ID:             jr.nextRangeID,
+		JobID:          jobID,
+		RangeStart:     cursor,
+		RangeEnd:       end,
+		NextID:         cursor,
+		Status:         domain.JobStatusRunning,
+		LeasedBy:       workerID,
+		LeaseExpiresAt: now.Add(leaseTTL),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	jr.ranges[carved.ID] = carved
+	if jr.jobRanges[jobID] == nil {
+		jr.jobRanges[jobID] = make(map[int]struct{})
+	}
+	jr.jobRanges[jobID][carved.ID] = struct{}{}
+	return carved, nil
 }
 
 // RenewLeases extends every active lease of a worker
@@ -424,7 +473,7 @@ func (jr *JobRepository) RenewLeases(ctx context.Context, workerID int, leaseTTL
 	now := time.Now()
 	renewed := 0
 	for id, r := range jr.ranges {
-		if r.LeasedBy != workerID || r.Status != domain.JobStatusRunning {
+		if r.LeasedBy != workerID || r.LeaseExpired(now) || r.Status != domain.JobStatusRunning {
 			continue
 		}
 		r.LeaseExpiresAt = now.Add(leaseTTL)

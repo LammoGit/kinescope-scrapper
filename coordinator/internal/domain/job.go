@@ -86,12 +86,12 @@ func (j *Job) DeassignWorkers(ws ...int) {
 
 // Leased reports whether the range is currently assigned to a worker
 func (r *Range) Leased() bool {
-	return r.LeasedBy != -1
+	return r.LeasedBy != 0
 }
 
 // LeaseExpired reports whether the range's lease is no longer valid
 func (r *Range) LeaseExpired(now time.Time) bool {
-	return r.Leased() && !r.LeaseExpiresAt.IsZero() && !now.Before(r.LeaseExpiresAt)
+	return !r.Leased() || (!r.LeaseExpiresAt.IsZero() && !now.Before(r.LeaseExpiresAt))
 }
 
 // Exhausted reports whether every identifier of the range was processed

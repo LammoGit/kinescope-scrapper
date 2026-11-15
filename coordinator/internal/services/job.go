@@ -7,6 +7,7 @@ import (
 	"coordinator/internal/utility"
 	"coordinator/pkg/sse"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -229,6 +230,10 @@ func (s *JobService) signal() {
 
 // assignAvailableRanges leases free ranges to workers waiting for one
 func (s *JobService) assignAvailableRanges(ctx context.Context) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -236,43 +241,116 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 		return
 	}
 
-	ranges, err := s.storage.GetUnassignedRanges(ctx)
-	if err != nil || len(ranges) == 0 {
+	jobs, err := s.storage.GetJobs(ctx)
+	if err != nil {
 		return
 	}
 
-	// IN DEVELOPMENT
-	// Should give free ranges or create new ones from active jobs for workers
-	// depending on their job
-	// Goal is for all jobs to finish at the same time
-	// If worker telemetry shows that its load is high, then shouldn't give any jobs
-	// Use job with lower number of workers
-	// Use job with slower speed of finishing
-	for _, r := range ranges {
-		job, err := s.storage.GetJob(ctx, r.JobID)
-		if err != nil || job.Status != domain.JobStatusRunning {
+	type candidate struct {
+		id       int
+		finishIn time.Duration
+	}
+	candidates := make([]candidate, 0, len(jobs))
+	for _, job := range jobs {
+		if job.Status != domain.JobStatusRunning || job.Paused {
 			continue
 		}
 
-		for workerID, ch := range s.leasers {
-			if err := s.storage.TryClaimRange(ctx, r.ID, workerID, s.leaseTime); err != nil {
+		ranges, err := s.storage.GetRangesByJobID(ctx, job.ID)
+		if err != nil {
+			continue
+		}
+
+		remaining := 0
+		frontier := job.Config.Range.From - 1
+		for _, r := range ranges {
+			if r.RangeEnd > frontier {
+				frontier = r.RangeEnd
+			}
+			if r.Status == domain.JobStatusCompleted || r.Exhausted() {
 				continue
 			}
+			remaining += r.RangeEnd - r.NextID + 1
+		}
+		if frontier < job.Config.Range.To {
+			remaining += job.Config.Range.To - frontier
+		}
+		if remaining <= 0 {
+			continue
+		}
 
-			claimed, err := s.storage.GetRangeByID(ctx, r.ID)
+		workers := len(job.Workers)
+		if workers == 0 {
+			workers = 1
+		}
+		var ttf time.Duration
+		if m, err := s.storage.GetJobMetricsByID(ctx, job.ID); err == nil && m.IdentifiersPerSecond > 0 {
+			perSec := m.IdentifiersPerSecond * float64(workers)
+			ttf = time.Duration(float64(remaining) / perSec * float64(time.Second))
+		} else {
+			ttf = time.Duration(1<<62 - 1)
+		}
+		candidates = append(candidates, candidate{job.ID, ttf})
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].finishIn != candidates[j].finishIn {
+			return candidates[i].finishIn > candidates[j].finishIn
+		}
+		return candidates[i].id < candidates[j].id
+	})
+
+	workerIDs := make([]int, 0, len(s.leasers))
+	for id := range s.leasers {
+		workerIDs = append(workerIDs, id)
+	}
+	sort.Ints(workerIDs)
+
+	const (
+		loadThreshold  = 0.85
+		queueThreshold = 10
+		minFreeSpace   = 1 << 30
+	)
+
+	for _, workerID := range workerIDs {
+		ch := s.leasers[workerID]
+
+		if m, err := s.storage.GetWorkerMetricsByID(ctx, workerID); err == nil {
+			if m.CPULoad > loadThreshold || m.MemoryLoad > loadThreshold ||
+				m.DiskLoad > loadThreshold || m.NetworkLoad > loadThreshold ||
+				m.DownloadQueueSize > queueThreshold ||
+				(m.FreeSpaceBytes > 0 && m.FreeSpaceBytes < minFreeSpace) {
+				continue
+			}
+		}
+
+		var claimed domain.Range
+		var got bool
+		for _, c := range candidates {
+			r, err := s.storage.TryClaimRange(ctx, workerID, c.id, s.leaseTime)
 			if err != nil {
-				claimed = r
+				continue
 			}
-
-			select {
-			case ch <- claimed:
-				delete(s.leasers, workerID)
-			default:
-				// The waiter is gone, so give the range back
-				_ = s.storage.ReleaseRangeByID(ctx, r.ID)
-			}
+			claimed = r
+			got = true
 			break
 		}
+		if !got {
+			continue
+		}
+
+		select {
+		case ch <- claimed:
+			delete(s.leasers, workerID)
+		default:
+			_ = s.storage.ReleaseRangeByID(ctx, claimed.ID)
+		}
+	}
+
+	if len(s.leasers) > 0 {
+		s.signal()
 	}
 }
 
