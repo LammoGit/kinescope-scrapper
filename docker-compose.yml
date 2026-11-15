@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16
+    env_file:
+      - .env
+    container_name: scrappy_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # s3:
+  
+  backend:
+    build:
+      context: .
+      dockerfile: coordinator/Dockerfile
+      args:
+        GO_TAGS: "postgres"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DSN: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable"
+    container_name: scrappy_backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+  frontend:
+    build: ./frontend/
+    env_file: .env
+    command: cp -r /app/build/. /static/
+    volumes:
+      - static:/static
+
+  gateway:
+    build: ./nginx/
+    env_file: .env
+    ports:
+      - 9000:443
+    depends_on:
+      - backend
+      - frontend
+    volumes:
+      - static:/static
+      - ./cert.crt:/etc/nginx/cert.crt
+      - ./cert.key:/etc/nginx/cert.key
+
+volumes:
+  postgres_data:
+  static:
