@@ -16,9 +16,9 @@ import (
 
 // Errors
 var (
-	ErrFailedToGetHomeDir    = errors.New("")
-	ErrFailedToReadPublicKey = errors.New("")
-	ErrInvalidPublicKey      = errors.New("")
+	ErrFailedToGetHomeDir    = errors.New("Failed to get home directory")
+	ErrFailedToReadPublicKey = errors.New("Failed to read public key")
+	ErrInvalidPublicKey      = errors.New("Read public key is invalid")
 )
 
 type App struct {

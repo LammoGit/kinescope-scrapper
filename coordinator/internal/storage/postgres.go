@@ -1,4 +1,4 @@
-//go:build postgres && !sqlite
+//go:build postgres
 
 package storage
 
@@ -32,9 +32,9 @@ var _ Storage = (*Postgres)(nil)
 // NewStorage opens the database from DATABASE_URL, verifies the connection and
 // applies pending embedded migrations.
 func NewStorage() (Storage, error) {
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
-		return nil, fmt.Errorf("storage: DATABASE_URL is not set")
+		return nil, fmt.Errorf("storage: POSTGRES_HOST is not set")
 	}
 
 	db, err := sql.Open("pgx", dsn)

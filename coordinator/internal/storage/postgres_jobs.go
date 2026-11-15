@@ -422,50 +422,141 @@ func collectRanges(rows *sql.Rows) ([]domain.Range, error) {
 }
 
 // TryClaimRange atomically leases an unassigned or expired range.
-func (p *Postgres) TryClaimRange(ctx context.Context, rangeID, workerID int, leaseTTL time.Duration) error {
+func (p *Postgres) TryClaimRange(ctx context.Context, workerID, jobID int, leaseTTL time.Duration) (domain.Range, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return domain.Range{}, err
 	}
 
-	var claimed int
-	err := p.db.QueryRowContext(ctx, `
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Range{}, err
+	}
+	defer tx.Rollback()
+
+	var (
+		jobStatus          string
+		rangeFrom, rangeTo int64
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT status, range_from, range_to
+		FROM jobs
+		WHERE id = $1
+		FOR NO KEY UPDATE
+	`, jobID).Scan(&jobStatus, &rangeFrom, &rangeTo)
+	if err == sql.ErrNoRows {
+		return domain.Range{}, repos.ErrJobNotFoundByID
+	}
+	if err != nil {
+		return domain.Range{}, err
+	}
+	if jobStatus == domain.JobStatusCompleted {
+		return domain.Range{}, repos.ErrJobIsCompleted
+	}
+
+	var claimed domain.Range
+	err = tx.QueryRowContext(ctx, `
 		UPDATE ranges
 		SET leased_by = $2,
 		    lease_expires_at = now() + make_interval(secs => $3),
 		    status = 'running',
 		    updated_at = now()
-		WHERE id = $1
-		  AND status NOT IN ('completed', 'stopped', 'failed')
-		  AND (leased_by = 0 OR lease_expires_at IS NULL OR lease_expires_at <= now())
-		RETURNING id`,
-		rangeID, workerID, leaseTTL.Seconds(),
-	).Scan(&claimed)
+		WHERE id = (
+			SELECT id
+			FROM ranges
+			WHERE job_id = $1
+			  AND status <> 'completed'
+			  AND next_id <= range_end
+			  AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+			ORDER BY range_start, id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, job_id, range_start, range_end, next_id, status,
+		          leased_by, lease_expires_at, created_at, updated_at
+	`, jobID, workerID, leaseTTL.Seconds()).Scan(
+		&claimed.ID, &claimed.JobID, &claimed.RangeStart, &claimed.RangeEnd,
+		&claimed.NextID, &claimed.Status, &claimed.LeasedBy, &claimed.LeaseExpiresAt,
+		&claimed.CreatedAt, &claimed.UpdatedAt,
+	)
 	if err == nil {
-		return nil
+		if err := tx.Commit(); err != nil {
+			return domain.Range{}, err
+		}
+		return claimed, nil
 	}
 	if err != sql.ErrNoRows {
-		return err
+		return domain.Range{}, err
 	}
 
-	var (
-		status string
-		leased int
-		lease  sql.NullTime
-	)
-	err = p.db.QueryRowContext(ctx,
-		`SELECT status, leased_by, lease_expires_at FROM ranges WHERE id = $1`,
-		rangeID,
-	).Scan(&status, &leased, &lease)
+	var gapStart, gapEnd int64
+	err = tx.QueryRowContext(ctx, `
+		WITH ordered AS (
+			SELECT range_start, range_end,
+			       LAG(range_end) OVER (ORDER BY range_start, id) AS prev_end
+			FROM ranges
+			WHERE job_id = $1
+		),
+		gaps AS (
+			SELECT
+				GREATEST(COALESCE(prev_end + 1, $2::bigint), $2::bigint) AS gap_start,
+				range_start - 1                                          AS gap_end
+			FROM ordered
+			WHERE range_start > GREATEST(COALESCE(prev_end + 1, $2::bigint), $2::bigint)
+
+			UNION ALL
+
+			SELECT
+				GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) AS gap_start,
+				$3::bigint                                                    AS gap_end
+			FROM ranges
+			WHERE job_id = $1
+			HAVING GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) <= $3::bigint
+		)
+		SELECT gap_start, gap_end
+		FROM gaps
+		ORDER BY gap_start
+		LIMIT 1
+	`, jobID, rangeFrom, rangeTo).Scan(&gapStart, &gapEnd)
+	if err == sql.ErrNoRows {
+		return domain.Range{}, repos.ErrRangeIsTaken
+	}
 	if err != nil {
-		return withNotFound(err, errRangeNotFound)
+		return domain.Range{}, err
 	}
-	if status == domain.JobStatusCompleted || status == domain.JobStatusStopped || status == domain.JobStatusFailed {
-		return repos.ErrRangeIsCompleted
+
+	gapSize := gapEnd - gapStart + 1
+	const maxSize int64 = 1000
+	var size int64
+	switch {
+	case gapSize <= maxSize:
+		size = gapSize
+	case gapSize < 2*maxSize:
+		size = gapSize / 2
+	default:
+		size = maxSize
 	}
-	if leased != 0 && (!lease.Valid || time.Now().Before(lease.Time)) {
-		return repos.ErrRangeIsTaken
+	end := gapStart + size - 1
+
+	var carved domain.Range
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO ranges (job_id, range_start, range_end, next_id, status,
+		                    leased_by, lease_expires_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $2, 'running', $4,
+		        now() + make_interval(secs => $5), now(), now())
+		RETURNING id, job_id, range_start, range_end, next_id, status,
+		          leased_by, lease_expires_at, created_at, updated_at
+	`, jobID, gapStart, end, workerID, leaseTTL.Seconds()).Scan(
+		&carved.ID, &carved.JobID, &carved.RangeStart, &carved.RangeEnd,
+		&carved.NextID, &carved.Status, &carved.LeasedBy, &carved.LeaseExpiresAt,
+		&carved.CreatedAt, &carved.UpdatedAt,
+	)
+	if err != nil {
+		return domain.Range{}, err
 	}
-	return repos.ErrRangeIsTaken
+	if err := tx.Commit(); err != nil {
+		return domain.Range{}, err
+	}
+	return carved, nil
 }
 
 func (p *Postgres) RenewLeases(ctx context.Context, workerID int, leaseTTL time.Duration) (int, error) {

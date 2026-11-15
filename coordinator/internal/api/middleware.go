@@ -5,6 +5,7 @@ import (
 	"coordinator/internal/domain"
 	"coordinator/internal/utility"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -35,17 +36,14 @@ func bearerAuthMiddleware(app *app.App, roles ...string) gin.HandlerFunc {
 			return
 		}
 		if len(roles) > 0 {
-			for _, r := range roles {
-				if r == claims.UserRole {
-					c.Set("userID", claims.UserID)
-					c.Set("userRole", string(claims.UserRole))
-					c.Next()
-					return
-				}
+			if slices.Contains(roles, claims.UserRole) {
+				c.Set("userID", claims.UserID)
+				c.Set("userRole", string(claims.UserRole))
+				c.Next()
+				return
 			}
-			c.AbortWithStatus(http.StatusForbidden)
-			return
 		}
+		utility.SendError(c, utility.NewForbiddenError("you do not have permission to perform this action (requires operator or administrator role)"))
 		c.Set("userID", claims.UserID)
 		c.Set("userRole", string(claims.UserRole))
 		c.Next()
@@ -116,7 +114,7 @@ func signatureAuthMiddleware(app *app.App) gin.HandlerFunc {
 
 // userOrAdminMiddleware
 // Must be used only after bearerAuthMiddleware
-func userOrAdminMiddleware(app *app.App) gin.HandlerFunc {
+func userOrAdminMiddleware(_ *app.App) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole := c.GetString("userRole")
 		userID := c.GetInt("userID")

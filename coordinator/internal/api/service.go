@@ -21,7 +21,7 @@ func LoadServiceRouter(router gin.IRouter, app *app.App) {
 		var queries struct {
 			Query  string `form:"q" binding:"required"`
 			Limit  int    `form:"limit" binding:"required,gt=0"`
-			Offset int    `form:"offset" binding:"required,min=0"`
+			Offset int    `form:"offset" binding:"omitempty,min=0"`
 		}
 		if err := c.ShouldBindQuery(&queries); err != nil {
 			utility.SendBindingError(c, err)
@@ -44,7 +44,7 @@ func LoadServiceRouter(router gin.IRouter, app *app.App) {
 	router.GET("/recommended", func(c *gin.Context) {
 		var queries struct {
 			Limit  int `form:"limit" binding:"required,gt=0"`
-			Offset int `form:"offset" binding:"required,min=0"`
+			Offset int `form:"offset" binding:"omitempty,min=0"`
 		}
 		if err := c.ShouldBindQuery(&queries); err != nil {
 			utility.SendBindingError(c, err)
@@ -94,7 +94,7 @@ func LoadServiceRouter(router gin.IRouter, app *app.App) {
 
 		var queries struct {
 			Limit  int `form:"limit" binding:"required,gt=0"`
-			Offset int `form:"offset" binding:"required,min=0"`
+			Offset int `form:"offset" binding:"omitempty,min=0"`
 		}
 		if err := c.ShouldBindQuery(&queries); err != nil {
 			utility.SendBindingError(c, err)
