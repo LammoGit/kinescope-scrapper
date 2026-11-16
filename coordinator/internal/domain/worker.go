@@ -14,7 +14,7 @@ const (
 type WorkerConfig struct {
 	Name           string `json:"name" form:"name" binding:"required,min=1,max=64"`
 	Host           string `json:"host" form:"host" binding:"required"`
-	SSHPort        int    `json:"ssh_port" form:"ssh_port" binding:"required,port"`
+	SSHPort        uint16 `json:"ssh_port" form:"ssh_port" binding:"required,port"`
 	SSHUser        string `json:"ssh_user" form:"ssh_user" binding:"required"`
 	SSHKey         string `json:"ssh_key" form:"ssh_key" binding:"required"`
 	Threads        int    `json:"threads" form:"threads" binding:"required,gt=0"`

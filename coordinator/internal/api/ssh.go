@@ -4,6 +4,9 @@ import (
 	"coordinator/internal/app"
 	"coordinator/internal/domain"
 	"coordinator/internal/utility"
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -29,8 +32,12 @@ func LoadSSHRouter(router gin.IRouter, app *app.App) {
 	auth := router.Group("", bearerAuthMiddleware(app, domain.UserRoleAdministrator))
 
 	auth.GET("/:workerId", func(c *gin.Context) {
-		workerID, err := strconv.Atoi(c.Param("workerId"))
+		rawID := c.Param("workerId")
+		slog.Info("Received worker SSH terminal request", "workerId", rawID)
+
+		workerID, err := strconv.Atoi(rawID)
 		if err != nil {
+			slog.Error("Invalid worker ID", "workerId", rawID, "error", err)
 			utility.SendError(c, ErrInvalidWorkerID)
 			return
 		}
@@ -38,46 +45,55 @@ func LoadSSHRouter(router gin.IRouter, app *app.App) {
 		ctx := c.Request.Context()
 		worker, err := app.Worker.GetWorkerByID(ctx, workerID)
 		if err != nil {
+			slog.Error("Failed to fetch worker by ID", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
+		slog.Info("Reading SSH private key", "workerId", workerID, "path", worker.Config.SSHKey)
 		keyBytes, err := os.ReadFile(worker.Config.SSHKey)
 		if err != nil {
+			slog.Error("Failed to read SSH key file", "workerId", workerID, "path", worker.Config.SSHKey, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
-		signer, err := ssh.NewSignerFromKey(keyBytes)
+		signer, err := ssh.ParsePrivateKey(keyBytes)
 		if err != nil {
+			slog.Error("Failed to parse SSH private key", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
 		pubKey, err := ssh.NewPublicKey(worker.PublicKey)
 		if err != nil {
+			slog.Error("Failed to parse worker host public key", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
 		config := &ssh.ClientConfig{
-			User: worker.Config.SSHUser,
-			Auth: []ssh.AuthMethod{
-				ssh.PublicKeys(signer),
-			},
-			HostKeyCallback: ssh.FixedHostKey(pubKey),
+			User:              worker.Config.SSHUser,
+			Auth:              []ssh.AuthMethod{ssh.PublicKeys(signer)},
+			HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
+			HostKeyCallback:   ssh.FixedHostKey(pubKey),
+			Timeout:           sshDialTimeout,
 		}
 
-		addr := net.JoinHostPort(worker.Config.Host, strconv.Itoa(worker.Config.SSHPort))
+		addr := net.JoinHostPort(worker.Config.Host, strconv.Itoa(int(worker.Config.SSHPort)))
+		slog.Info("Dialing worker SSH", "workerId", workerID, "addr", addr, "user", worker.Config.SSHUser)
 		client, err := ssh.Dial("tcp", addr, config)
 		if err != nil {
+			slog.Error("Failed to dial worker SSH", "workerId", workerID, "addr", addr, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 		defer client.Close()
 
+		slog.Info("Creating SSH session", "workerId", workerID)
 		session, err := client.NewSession()
 		if err != nil {
+			slog.Error("Failed to create SSH session", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
@@ -85,12 +101,14 @@ func LoadSSHRouter(router gin.IRouter, app *app.App) {
 
 		stdin, err := session.StdinPipe()
 		if err != nil {
+			slog.Error("Failed to open SSH stdin pipe", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
 		stdout, err := session.StdoutPipe()
 		if err != nil {
+			slog.Error("Failed to open SSH stdout pipe", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
@@ -103,22 +121,29 @@ func LoadSSHRouter(router gin.IRouter, app *app.App) {
 			ssh.TTY_OP_OSPEED: 14400,
 		}
 
+		slog.Info("Requesting PTY", "workerId", workerID)
 		if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
+			slog.Error("Failed to request PTY", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
-		if err := session.Shell(); err != nil {
+		slog.Info("Starting remote shell", "workerId", workerID)
+		if err := session.Start("PATH=$HOME/rbin exec /bin/bash --restricted --noprofile --norc"); err != nil {
+			slog.Error("Failed to start remote shell", "workerId", workerID, "error", err)
 			utility.SendError(c, err)
 			return
 		}
 
+		slog.Info("Upgrading connection to WebSocket", "workerId", workerID)
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
-			utility.SendError(c, err)
+			slog.Error("Failed to upgrade connection to WebSocket", "workerId", workerID, "error", err)
 			return
 		}
 		defer ws.Close()
+
+		slog.Info("WebSocket SSH bridge established", "workerId", workerID)
 
 		go func() {
 			defer ws.Close()
@@ -127,12 +152,16 @@ func LoadSSHRouter(router gin.IRouter, app *app.App) {
 				n, err := stdout.Read(buf)
 				if n > 0 {
 					if writeErr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
-						utility.SendError(c, writeErr)
+						slog.Error("Failed to write SSH output to WebSocket", "workerId", workerID, "error", writeErr)
 						return
 					}
 				}
 				if err != nil {
-					utility.SendError(c, err)
+					if errors.Is(err, io.EOF) {
+						slog.Info("SSH stdout closed (EOF)", "workerId", workerID)
+					} else {
+						slog.Error("Failed to read from SSH stdout", "workerId", workerID, "error", err)
+					}
 					return
 				}
 			}
@@ -141,11 +170,15 @@ func LoadSSHRouter(router gin.IRouter, app *app.App) {
 		for {
 			_, msg, err := ws.ReadMessage()
 			if err != nil {
+				slog.Info("WebSocket read loop ended", "workerId", workerID, "error", err)
 				break
 			}
 			if _, err := stdin.Write(msg); err != nil {
+				slog.Error("Failed to write WebSocket input to SSH stdin", "workerId", workerID, "error", err)
 				break
 			}
 		}
+
+		slog.Info("Closed worker SSH terminal session", "workerId", workerID)
 	})
 }

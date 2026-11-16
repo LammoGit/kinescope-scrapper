@@ -8,7 +8,7 @@ export default function AdminLayout() {
   return (
     <div className="admin">
       <aside className="sidebar">
-        <div className="brand"><Link to="/">Kinescope</Link></div>
+        <div className="brand"><Link to="/">Scrappy</Link></div>
         <nav>
           <NavLink to="/admin" end>Dashboard</NavLink>
           <NavLink to="/admin/jobs">Jobs</NavLink>

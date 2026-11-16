@@ -34,7 +34,7 @@ func LoadUsersRouter(router gin.IRouter, app *app.App) {
 			return
 		}
 
-		salt, hash, err := app.Crypto.HashPassword(payload.Password)
+		hash, salt, err := app.Crypto.HashPassword(payload.Password)
 		if err != nil {
 			utility.SendError(c, err)
 			return
@@ -206,7 +206,7 @@ func LoadUsersRouter(router gin.IRouter, app *app.App) {
 			return
 		}
 
-		salt, hash, err := app.Crypto.HashPassword(body.NewPassword)
+		hash, salt, err := app.Crypto.HashPassword(body.NewPassword)
 		if err != nil {
 			utility.SendError(c, err)
 			return

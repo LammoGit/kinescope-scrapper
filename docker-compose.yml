@@ -30,9 +30,12 @@ services:
     container_name: scrappy_backend
     ports:
       - "8080:8080"
+    extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - keys:/keys
     restart: always
 
   frontend:
@@ -58,3 +61,4 @@ services:
 volumes:
   postgres_data:
   static:
+  keys:

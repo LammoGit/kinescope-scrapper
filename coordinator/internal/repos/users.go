@@ -22,7 +22,7 @@ var (
 type IUserRepository interface {
 	GetUserByID(ctx context.Context, id int) (domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
-	CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials) (domain.User, error)
+	CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials, role string) (domain.User, error)
 	ReplaceUser(ctx context.Context, user domain.User) error
 	DeleteUserByID(ctx context.Context, id int) error
 }
@@ -76,7 +76,7 @@ func (ur *UserRepository) GetUserByEmail(ctx context.Context, email string) (dom
 }
 
 // CreateUser creates a new User object in the repository
-func (ur *UserRepository) CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials) (domain.User, error) {
+func (ur *UserRepository) CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials, role string) (domain.User, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.User{}, err
 	}
@@ -97,7 +97,7 @@ func (ur *UserRepository) CreateUser(ctx context.Context, username string, email
 		Username:  username,
 		Email:     email,
 		Password:  creds,
-		Role:      domain.UserRoleViewer,
+		Role:      role,
 		CreatedAt: time.Now(),
 	}
 

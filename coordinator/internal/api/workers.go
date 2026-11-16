@@ -7,9 +7,14 @@ import (
 	"coordinator/internal/services"
 	"coordinator/internal/utility"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,12 +30,12 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 
 	// Register a new worker
 	user.POST("/register", func(c *gin.Context) {
+		slog.Info("Got worker registration request")
 		var payload struct {
 			Name           string `json:"name" form:"name" binding:"required,min=1,max=64"`
 			Host           string `json:"host" form:"host" binding:"required"`
-			SSHPort        int    `json:"ssh_port" form:"ssh_port" binding:"required,port"`
+			SSHPort        uint16 `json:"ssh_port" form:"ssh_port" binding:"required,port"`
 			SSHUser        string `json:"ssh_user" form:"ssh_user" binding:"required"`
-			SSHKey         string `json:"ssh_key" form:"ssh_key" binding:"required"`
 			SSHPassword    string `json:"ssh_password" form:"ssh_password" binding:"omitempty"`
 			Threads        int    `json:"threads" form:"threads" binding:"required,gt=0"`
 			StoragePath    string `json:"storage_path" form:"storage_path" binding:"required,filepath"`
@@ -38,10 +43,21 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 		}
 
 		if err := c.ShouldBindJSON(&payload); err != nil {
+			slog.Info("Registration request body didn't pass validation")
 			utility.SendBindingError(c, err)
 			return
 		}
 
+		// Generating filename for a new ssh key
+		safeName := regexp.MustCompile(`[^a-zA-Z0-9_-]+`).ReplaceAllString(payload.Name, "_")
+		safeName = strings.Trim(safeName, "_")
+		if safeName == "" {
+			safeName = "worker"
+		}
+		fileName := fmt.Sprintf("%s_%d.pem", safeName, time.Now().UnixNano())
+		sshKey := filepath.Join("/keys", fileName)
+
+		slog.Info("Starting provisioning")
 		ctx := c.Request.Context()
 		pubKey, err := app.Provisioning.Setup(
 			ctx,
@@ -49,13 +65,14 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 			payload.SSHPort,
 			payload.SSHUser,
 			payload.SSHPassword,
-			payload.SSHKey,
+			sshKey,
 		)
 		if err != nil {
 			utility.SendError(c, err)
 			return
 		}
 
+		slog.Info("Creating new worker")
 		worker, err := app.Worker.CreateWorker(
 			ctx,
 			domain.WorkerConfig{
@@ -63,7 +80,7 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 				Host:           payload.Host,
 				SSHPort:        payload.SSHPort,
 				SSHUser:        payload.SSHUser,
-				SSHKey:         payload.SSHKey,
+				SSHKey:         sshKey,
 				Threads:        payload.Threads,
 				StoragePath:    payload.StoragePath,
 				MinFreeSpaceGB: payload.MinFreeSpaceGB,

@@ -40,7 +40,7 @@ func (p *Postgres) GetUserByEmail(ctx context.Context, email string) (domain.Use
 	return user, withNotFound(err, repos.ErrUserNotFoundByEmail)
 }
 
-func (p *Postgres) CreateUser(ctx context.Context, username, email string, creds domain.PasswordCredentials) (domain.User, error) {
+func (p *Postgres) CreateUser(ctx context.Context, username, email string, creds domain.PasswordCredentials, role string) (domain.User, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.User{}, err
 	}
@@ -49,7 +49,7 @@ func (p *Postgres) CreateUser(ctx context.Context, username, email string, creds
 		Username:  username,
 		Email:     email,
 		Password:  creds,
-		Role:      domain.UserRoleViewer,
+		Role:      role,
 		Avatar:    "",
 		CreatedAt: time.Now(),
 	}

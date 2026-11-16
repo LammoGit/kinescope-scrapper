@@ -35,7 +35,9 @@ func (s *UserService) Register(ctx context.Context, username string, email strin
 	return s.storage.CreateUser(ctx, username, email, domain.PasswordCredentials{
 		Hash: hash,
 		Salt: salt,
-	})
+	},
+		domain.UserRoleViewer,
+	)
 }
 
 // GetUserByEmail returns a user with the given email

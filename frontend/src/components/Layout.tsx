@@ -18,7 +18,7 @@ export function PublicLayout() {
   return (
     <div className="app">
       <header className="topbar">
-        <Link to="/" className="brand">Kinescope Archive</Link>
+        <Link to="/" className="brand">Scrappy</Link>
         <form className="searchbar" onSubmit={submit}>
           <input
             value={q}

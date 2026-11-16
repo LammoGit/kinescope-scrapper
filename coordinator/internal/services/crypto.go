@@ -172,7 +172,7 @@ func NewCryptoService(secret []byte, issuer string, opts ...CryptoOption) (*Cryp
 }
 
 // HashPassword hashes user password and returns hash with random salt used during hash generation
-func (s *CryptoService) HashPassword(password string) (salt, hash []byte, err error) {
+func (s *CryptoService) HashPassword(password string) (hash, salt []byte, err error) {
 	salt = make([]byte, s.argonConfig.SaltSize)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, nil, ErrFailedToReadSalt
@@ -185,7 +185,7 @@ func (s *CryptoService) HashPassword(password string) (salt, hash []byte, err er
 		s.argonConfig.Threads,
 		s.argonConfig.KeyLen,
 	)
-	return salt, hash, nil
+	return hash, salt, nil
 }
 
 // VerifyPassword check whether given password matches salt-hash pair

@@ -4,6 +4,7 @@ import (
 	"coordinator/internal/app"
 	"coordinator/internal/domain"
 	"coordinator/internal/utility"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -23,27 +24,51 @@ var (
 // bearerAuthMiddleware
 func bearerAuthMiddleware(app *app.App, roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		var rawToken string
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			rawToken = strings.TrimPrefix(authHeader, "Bearer ")
+		} else if queryToken := c.Query("token"); queryToken != "" {
+			rawToken = queryToken
+		}
+
+		if rawToken == "" {
+			slog.Warn("Missing or malformed Authorization token", "method", method, "path", path)
 			c.Header("WWW-Authenticate", "Bearer")
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
 
-		claims, err := app.Crypto.ParseUserToken(strings.TrimPrefix(authHeader, "Bearer "))
+		claims, err := app.Crypto.ParseUserToken(rawToken)
 		if err != nil {
+			slog.Warn("Failed to parse bearer token", "method", method, "path", path, "error", err)
 			utility.SendError(c, err)
+			c.Abort()
 			return
 		}
-		if len(roles) > 0 {
-			if slices.Contains(roles, claims.UserRole) {
-				c.Set("userID", claims.UserID)
-				c.Set("userRole", string(claims.UserRole))
-				c.Next()
-				return
-			}
+
+		if len(roles) > 0 && !slices.Contains(roles, string(claims.UserRole)) {
+			slog.Warn("User role forbidden for route",
+				"method", method,
+				"path", path,
+				"userID", claims.UserID,
+				"userRole", claims.UserRole,
+				"requiredRoles", roles,
+			)
+			utility.SendError(c, utility.NewForbiddenError("you do not have permission to perform this action (requires operator or administrator role)"))
+			c.Abort()
+			return
 		}
-		utility.SendError(c, utility.NewForbiddenError("you do not have permission to perform this action (requires operator or administrator role)"))
+
+		slog.Info("Authenticated request",
+			"method", method,
+			"path", path,
+			"userID", claims.UserID,
+			"userRole", claims.UserRole,
+		)
 		c.Set("userID", claims.UserID)
 		c.Set("userRole", string(claims.UserRole))
 		c.Next()

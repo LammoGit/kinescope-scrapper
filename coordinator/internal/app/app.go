@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"coordinator/internal/domain"
 	"coordinator/internal/services"
 	st "coordinator/internal/storage"
 	"coordinator/pkg/sse"
@@ -48,6 +49,9 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) (*App, error) {
 	keyLen := os.Getenv("PASSWORD_HASH_LEN")
 	saltSize := os.Getenv("SALT_SIZE")
 	s3URL := os.Getenv("S3_SERVER_URL")
+	adminUsername := os.Getenv("ADMIN_USERNAME")
+	adminEmail := os.Getenv("ADMIN_EMAIL")
+	adminPassword := strings.TrimSpace(os.Getenv("ADMIN_PASSWORD"))
 
 	{
 		homeDir, err := os.UserHomeDir()
@@ -97,14 +101,15 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) (*App, error) {
 			return app, err
 		}
 		app.Crypto = cryptoService
-
 	}
 
-	userService, err := services.NewUserService(storage)
-	if err != nil {
-		return app, err
+	{
+		userService, err := services.NewUserService(storage)
+		if err != nil {
+			return app, err
+		}
+		app.User = userService
 	}
-	app.User = userService
 
 	workerService, err := services.NewWorkerService(hub, storage)
 	if err != nil {
@@ -135,6 +140,16 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) (*App, error) {
 		return app, err
 	}
 	app.Telemetry = telemetryService
+
+	hash, salt, err := app.Crypto.HashPassword(adminPassword)
+	if err != nil {
+		return app, err
+	}
+
+	storage.CreateUser(ctx, adminUsername, adminEmail, domain.PasswordCredentials{
+		Hash: hash,
+		Salt: salt,
+	}, domain.UserRoleAdministrator)
 
 	return app, nil
 }

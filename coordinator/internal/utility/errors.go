@@ -67,7 +67,7 @@ func StatusFromError(err error) int {
 
 // SendError sends an error with the HTTP status matching its kind
 func SendError(c *gin.Context, err error) {
-	c.JSON(StatusFromError(err), gin.H{
+	c.AbortWithStatusJSON(StatusFromError(err), gin.H{
 		"errors": []string{
 			err.Error(),
 		},
