@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	st "coordinator/internal/storage"
 	"coordinator/internal/utility"
+	"coordinator/pkg/sse"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -38,7 +40,7 @@ type ProvisioningService struct {
 }
 
 // NewProvisioningService creates a new ProvisioningService
-func NewProvisioningService(pubKey string) (*ProvisioningService, error) {
+func NewProvisioningService(_ context.Context, _ *sse.Hub, _ st.Storage, pubKey string) (*ProvisioningService, error) {
 	if pubKey == "" {
 		return nil, ErrEmptyCoordinatorPublicKey
 	}
@@ -153,6 +155,8 @@ mkdir -p ~/rbin && \
 ln -sf /bin/ls ~/rbin/ls && \
 ln -sf /bin/cd ~/rbin/cd && \
 ln -sf /bin/cat ~/rbin/cat && \
+ln -sf /bin/clear ~/rbin/clear && \
+ln -sf /bin/grep ~/rbin/grep && \
 ln -sf /usr/bin/tail ~/rbin/tail && \
 ln -sf /bin/df ~/rbin/df
 `

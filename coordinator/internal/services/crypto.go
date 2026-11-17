@@ -1,11 +1,14 @@
 package services
 
 import (
+	"context"
 	"coordinator/internal/domain"
+	st "coordinator/internal/storage"
 	"coordinator/internal/utility"
-	"crypto/ed25519"
+	"coordinator/pkg/sse"
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"time"
 
@@ -15,7 +18,8 @@ import (
 
 // Errors
 var (
-	ErrInvalidToken            = utility.NewValidationError("received token is invalid")
+	ErrInvalidToken            = utility.NewUnauthorizedError("received token is invalid")
+	ErrTokenExpired            = utility.NewUnauthorizedError("received token is expired")
 	ErrFailedToReadSalt        = utility.NewInternalError("crypto service failed to write random bytes to a salt buffer")
 	ErrEmptyIssuer             = utility.NewInternalError("empty issuer is given to the crypto service")
 	ErrEmptySecret             = utility.NewInternalError("empty secret is given to the crypto service")
@@ -28,21 +32,6 @@ type UserClaims struct {
 	UserRole string `json:"user_role"` // User's role
 	Type     string `json:"typ"`       // Type of token: "access" or "refresh"
 	jwt.RegisteredClaims
-}
-
-// UploadClaims claims of worker's resource upload JWT token
-type UploadClaims struct {
-	WorkerID     int               `json:"worker_id"`                          // Uploading worker's id
-	ResourceID   int               `json:"resource_id"`                        // Uploaded resource's id
-	SignatureKey ed25519.PublicKey `json:"signature_key" form:"signature_key"` // Worker's public key to verify signature
-	jwt.RegisteredClaims
-}
-
-// Upload
-type Upload struct {
-	WorkerID     int               `json:"worker_id" form:"worker_id"`
-	ResourceID   int               `json:"resource_id" form:"resource_id"`
-	SignatureKey ed25519.PublicKey `json:"signature_key" form:"signature_key"`
 }
 
 // Argon2Config configuration of argon2 hashing algorithm
@@ -123,25 +112,17 @@ func WithUserRefreshTTL(ttl time.Duration) CryptoOption {
 	}
 }
 
-// WithUploadAccessTTL CryptoService option that sets TTL of an upload access token
-func WithUploaAccessTTL(ttl time.Duration) CryptoOption {
-	return func(s *CryptoService) {
-		s.uploadAccessTTL = ttl
-	}
-}
-
 // CryptoService object used for managing passwords and JWT
 type CryptoService struct {
-	secret          []byte        // Secret used by password hashing algorithm
-	issuer          string        // Issuer set in generated JWT tokens
-	argonConfig     Argon2Config  // Config of Argon2 password hashing algorithm
-	userAccessTTL   time.Duration // TTL of generating user access tokens
-	userRefreshTTL  time.Duration // TTL of generating user refresh tokens
-	uploadAccessTTL time.Duration // TTL of generating upload access tokens
+	secret         []byte        // Secret used by password hashing algorithm
+	issuer         string        // Issuer set in generated JWT tokens
+	argonConfig    Argon2Config  // Config of Argon2 password hashing algorithm
+	userAccessTTL  time.Duration // TTL of generating user access tokens
+	userRefreshTTL time.Duration // TTL of generating user refresh tokens
 }
 
 // NewCryptoService returns new CryptoService with set secret and issuer, and with applies options to it
-func NewCryptoService(secret []byte, issuer string, opts ...CryptoOption) (*CryptoService, error) {
+func NewCryptoService(_ context.Context, _ *sse.Hub, _ st.Storage, secret []byte, issuer string, opts ...CryptoOption) (*CryptoService, error) {
 	if len(secret) == 0 {
 		return nil, ErrEmptySecret
 	}
@@ -159,9 +140,8 @@ func NewCryptoService(secret []byte, issuer string, opts ...CryptoOption) (*Cryp
 			KeyLen:     32,
 			SaltSize:   16,
 		},
-		userAccessTTL:   30 * time.Minute,
-		userRefreshTTL:  7 * 24 * time.Hour,
-		uploadAccessTTL: 30 * time.Minute,
+		userAccessTTL:  30 * time.Minute,
+		userRefreshTTL: 7 * 24 * time.Hour,
 	}
 
 	for _, opt := range opts {
@@ -238,60 +218,35 @@ func (s *CryptoService) SignUserTokens(user domain.User) (access, refresh string
 	return access, refresh, nil
 }
 
+// parseUserClaims parses a signed user token into UserClaims, mapping JWT library errors to distinct unauthorized errors so that expired tokens can be told apart from malformed ones
+func parseUserClaims(tokenString string, keyFunc jwt.Keyfunc) (*UserClaims, error) {
+	var claims UserClaims
+	token, err := jwt.ParseWithClaims(tokenString, &claims, keyFunc)
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, ErrTokenExpired
+		}
+		return nil, ErrInvalidToken
+	}
+	if !token.Valid {
+		return nil, ErrInvalidToken
+	}
+	return &claims, nil
+}
+
 // ParseUserToken parses user's JWT token string into UserClaims
 func (s *CryptoService) ParseUserToken(tokenString string) (*UserClaims, error) {
-	var claims UserClaims
-	token, err := jwt.ParseWithClaims(tokenString, &claims, func(t *jwt.Token) (interface{}, error) {
+	claims, err := parseUserClaims(tokenString, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("%w: %v", ErrUnexpectedSigningMethod, t.Header["alg"])
 		}
 		return s.secret, nil
 	})
-	if err != nil || !token.Valid || claims.Issuer != s.issuer {
-		return nil, ErrInvalidToken
-	}
-	return &claims, nil
-}
-
-// signUpload private function used to sign one upload token of given type, and with given duration
-func (s *CryptoService) signUpload(upload Upload, ttl time.Duration) (string, error) {
-	now := time.Now()
-	claims := UploadClaims{
-		WorkerID:     upload.WorkerID,
-		ResourceID:   upload.ResourceID,
-		SignatureKey: upload.SignatureKey,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    s.issuer,
-			Subject:   fmt.Sprintf("%d", upload.ResourceID),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(s.secret)
-}
-
-// SignUploadTokens returns signed acess and refresh upload JWT tokens in form of strings
-func (s *CryptoService) SignUploadToken(upload Upload) (access string, err error) {
-	access, err = s.signUpload(upload, s.uploadAccessTTL)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return access, nil
-}
-
-// ParseUploadToken parses upload JWT token string into UploadClaims
-func (s *CryptoService) ParseUploadToken(tokenString string) (*UploadClaims, error) {
-	var claims UploadClaims
-	token, err := jwt.ParseWithClaims(tokenString, &claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("%w: %v", ErrUnexpectedSigningMethod, t.Header["alg"])
-		}
-		return s.secret, nil
-	})
-	if err != nil || !token.Valid || claims.Issuer != s.issuer {
+	if claims.Issuer != s.issuer {
 		return nil, ErrInvalidToken
 	}
-	return &claims, nil
+	return claims, nil
 }

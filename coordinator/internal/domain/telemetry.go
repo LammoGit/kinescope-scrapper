@@ -26,8 +26,7 @@ type Metrics struct {
 	OldestInQueue        int     `json:"oldest_in_queue" form:"oldest_in_queue" binding:"required,min=0"`               // Age of the oldest download in the download queue of the worker
 }
 
-// AverageMetrics calculates the aggregate of multiple metrics snapshots
-// Identifiers that differ between snapshots are set to -1
+// AverageMetrics calculates the aggregate of multiple metrics snapshots, identifiers that differ between snapshots are set to 0
 func AverageMetrics(metrics ...Metrics) (nm Metrics) {
 	if len(metrics) == 0 {
 		return

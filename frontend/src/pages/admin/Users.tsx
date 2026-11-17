@@ -6,12 +6,15 @@ export default function Users() {
   const [users, setUsers] = useState<PublicUser[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState<Record<number, boolean>>({})
-
-  // The backend doesn't expose "list users" — it's a known gap in the API.
-  // We surface whatever users we can look up (currently none), and the page
-  // doubles as an admin utility for role changes, deletion, and password resets
-  // by numeric ID.
+  // Fallback for environments where the list endpoint is unavailable:
+  // individual users can still be managed by numeric ID.
   const [lookupId, setLookupId] = useState('')
+
+  useEffect(() => {
+    api.listUsers()
+      .then(setUsers)
+      .catch(() => { /* fall back to manual lookup below */ })
+  }, [])
 
   const lookup = async () => {
     const id = Number(lookupId)

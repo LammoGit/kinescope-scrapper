@@ -188,8 +188,7 @@ func LoadJobsRouter(router gin.IRouter, app *app.App) {
 	})
 }
 
-// parseJobID parses the jobId path parameter,
-// sending an error response when it isn't a valid integer
+// parseJobID parses the jobId path parameter, sending an error response when it isn't a valid integer
 func parseJobID(c *gin.Context) (int, bool) {
 	jobID, err := strconv.Atoi(c.Param("jobId"))
 	if err != nil {

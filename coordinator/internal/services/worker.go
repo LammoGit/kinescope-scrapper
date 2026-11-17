@@ -8,6 +8,7 @@ import (
 	"coordinator/pkg/sse"
 	"crypto/ed25519"
 	"fmt"
+	"log/slog"
 )
 
 // Errors
@@ -23,7 +24,7 @@ type WorkerService struct {
 }
 
 // NewWorkerService creates a new WorkerService
-func NewWorkerService(hub *sse.Hub, storage st.Storage) (*WorkerService, error) {
+func NewWorkerService(_ context.Context, hub *sse.Hub, storage st.Storage) (*WorkerService, error) {
 	if storage == nil {
 		return nil, ErrWorkerStorageUnavailable
 	}
@@ -49,6 +50,7 @@ func (s *WorkerService) CreateWorker(ctx context.Context, config domain.WorkerCo
 	worker.Config.Name = fmt.Sprintf("worker-%d", worker.ID)
 	s.storage.ReplaceWorker(ctx, worker)
 
+	slog.Info("Worker registered", "workerID", worker.ID, "name", worker.Config.Name)
 	s.publish(worker)
 	return worker, nil
 }
@@ -116,12 +118,19 @@ func (s *WorkerService) DeleteWorkerByID(ctx context.Context, id int) error {
 		return err
 	}
 
+	slog.Info("Worker deleted", "workerID", id)
+
 	if s.hub != nil {
 		topic := fmt.Sprintf("worker-%d", id)
 		s.hub.PublishAll([]string{topic, "worker-*"}, sse.SSEMessage{
 			Event: topic,
 			Data:  map[string]int{"id": id},
 		})
+		// Notify subscribers of /stream/workers/updates about the removal
+		s.hub.PublishAll(
+			[]string{fmt.Sprintf("worker-update-%d", id), "worker-update-*"},
+			sse.SSEMessage{Event: "worker.delete", Data: map[string]int{"id": id}},
+		)
 	}
 	return nil
 }
@@ -133,4 +142,9 @@ func (s *WorkerService) publish(worker domain.Worker) {
 	}
 	topic := fmt.Sprintf("worker-%d", worker.ID)
 	s.hub.PublishAll([]string{topic, "worker-*"}, sse.SSEMessage{Event: topic, Data: worker})
+	// Notify subscribers of /stream/workers/updates about the change
+	s.hub.PublishAll(
+		[]string{fmt.Sprintf("worker-update-%d", worker.ID), "worker-update-*"},
+		sse.SSEMessage{Event: "worker.update", Data: worker},
+	)
 }

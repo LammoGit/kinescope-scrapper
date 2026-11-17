@@ -14,6 +14,10 @@ export default function VideoPage() {
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!Number.isFinite(id) || id <= 0) {
+      setErr('Invalid video id')
+      return
+    }
     setErr(null)
     api.getVideo(id)
       .then((r) => { setUrl(r.url); setMeta(r.metadata) })

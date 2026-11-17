@@ -120,8 +120,7 @@ func (er *EventRepository) GetEventsByWorkerID(ctx context.Context, workerID int
 	}), nil
 }
 
-// filter returns the matching events ordered by insertion
-// The caller must hold at least a read lock
+// filter returns the matching events ordered by insertion, the caller must hold at least a read lock
 func (er *EventRepository) filter(match func(domain.Event) bool) []domain.Event {
 	ids := make([]int, 0, len(er.events))
 	for id := range er.events {

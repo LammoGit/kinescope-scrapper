@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"sort"
@@ -22,15 +23,14 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Postgres is a durable Storage implementation backed by PostgreSQL.
+// Postgres is a durable Storage implementation backed by PostgreSQL
 type Postgres struct {
 	db *sql.DB
 }
 
 var _ Storage = (*Postgres)(nil)
 
-// NewStorage opens the database from DATABASE_URL, verifies the connection and
-// applies pending embedded migrations.
+// NewStorage opens the database from POSTGRES_DSN, verifies the connection and applies pending embedded migrations
 func NewStorage() (Storage, error) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
@@ -53,19 +53,31 @@ func NewStorage() (Storage, error) {
 		db.Close()
 		return nil, fmt.Errorf("storage: ping postgres: %w", err)
 	}
+	slog.Info("Connected to PostgreSQL")
 
 	p := &Postgres{db: db}
 	if err := p.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
+	slog.Info("Database migrations applied")
 
 	return p, nil
 }
 
-// Close releases the underlying connection pool.
-func (p *Postgres) Close() error {
-	return p.db.Close()
+// Close releases the underlying connection pool
+func (p *Postgres) Shutdown(ctx context.Context) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- p.db.Close()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("postgres shutdown timed out: %w", ctx.Err())
+	}
 }
 
 //go:embed migrations/*.sql
@@ -73,8 +85,7 @@ var migrationFS embed.FS
 
 const migrationLockKey int64 = 0x6b696e6573636f70 // "kinescop"
 
-// migrate applies every embedded migration exactly once. An advisory lock
-// serializes concurrent coordinator instances during startup.
+// migrate applies every embedded migration exactly once, an advisory lock serializes concurrent coordinator instances during startup
 func (p *Postgres) migrate(ctx context.Context) error {
 	_, err := p.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -113,10 +124,12 @@ func (p *Postgres) migrate(ctx context.Context) error {
 			return fmt.Errorf("storage: check migration %s: %w", version, err)
 		}
 		if applied {
+			slog.Debug("Skipping already applied migration", "version", version)
 			_ = tx.Rollback()
 			continue
 		}
 
+		slog.Info("Applying database migration", "version", version)
 		body, err := migrationFS.ReadFile(file)
 		if err != nil {
 			_ = tx.Rollback()
@@ -141,8 +154,7 @@ func (p *Postgres) migrate(ctx context.Context) error {
 	return nil
 }
 
-// syncSequence moves the identity sequence of table past its current maximum.
-// It is needed only after inserting a row with an explicit identifier.
+// syncSequence moves the identity sequence of table past its current maximum, it is needed only after inserting a row with an explicit identifier
 func syncSequence(ctx context.Context, tx *sql.Tx, table string) error {
 	_, err := tx.ExecContext(ctx,
 		fmt.Sprintf(
@@ -153,7 +165,7 @@ func syncSequence(ctx context.Context, tx *sql.Tx, table string) error {
 	return err
 }
 
-// jsonBytes marshals a value for a JSONB column, storing JSON null as [].
+// jsonBytes marshals a value for a JSONB column, storing JSON null as []
 func jsonBytes(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -177,8 +189,7 @@ func withNotFound(err, target error) error {
 	return err
 }
 
-// Repository errors are reused so HTTP status mapping stays identical to the
-// in-memory implementation.
+// Repository errors are reused so HTTP status mapping stays identical to the in-memory implementation
 var (
 	errJobNotFound    = repos.ErrJobNotFoundByID
 	errRangeNotFound  = repos.ErrRangeNotFoundByID

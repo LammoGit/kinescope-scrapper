@@ -86,8 +86,7 @@ func scanRange(s rowScanner) (domain.Range, error) {
 	return r, nil
 }
 
-// CreateJob creates a job and returns it. When both name and config.Name are
-// empty, the job is named job-<id>, matching the in-memory storage.
+// CreateJob creates a job and returns it, when both name and config.Name are empty the job is named job-<id>, matching the in-memory storage
 func (p *Postgres) CreateJob(ctx context.Context, name string, config domain.JobConfig) (domain.Job, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Job{}, err
@@ -143,7 +142,7 @@ func (p *Postgres) CreateJob(ctx context.Context, name string, config domain.Job
 	}, nil
 }
 
-// AssignJob adds a worker to the job without duplicating it.
+// AssignJob adds a worker to the job without duplicating it
 func (p *Postgres) AssignJob(ctx context.Context, id int, worker domain.Worker) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -421,7 +420,7 @@ func collectRanges(rows *sql.Rows) ([]domain.Range, error) {
 	return ranges, rows.Err()
 }
 
-// TryClaimRange atomically leases an unassigned or expired range.
+// TryClaimRange atomically leases an unassigned or expired range
 func (p *Postgres) TryClaimRange(ctx context.Context, workerID, jobID int, leaseTTL time.Duration) (domain.Range, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Range{}, err
@@ -437,6 +436,8 @@ func (p *Postgres) TryClaimRange(ctx context.Context, workerID, jobID int, lease
 		jobStatus          string
 		rangeFrom, rangeTo int64
 	)
+	// Block size carved from unclaimed gaps
+	const maxSize int64 = 1000
 	err = tx.QueryRowContext(ctx, `
 		SELECT status, range_from, range_to
 		FROM jobs
@@ -507,16 +508,22 @@ func (p *Postgres) TryClaimRange(ctx context.Context, workerID, jobID int, lease
 
 			SELECT
 				GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) AS gap_start,
-				$3::bigint                                                    AS gap_end
+				CASE
+					WHEN $3::bigint > 0 THEN $3::bigint
+					ELSE GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) + $4::bigint - 1
+				END AS gap_end
 			FROM ranges
 			WHERE job_id = $1
-			HAVING GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) <= $3::bigint
+			HAVING CASE
+				WHEN $3::bigint > 0 THEN GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) <= $3::bigint
+				ELSE TRUE
+			END
 		)
 		SELECT gap_start, gap_end
 		FROM gaps
 		ORDER BY gap_start
 		LIMIT 1
-	`, jobID, rangeFrom, rangeTo).Scan(&gapStart, &gapEnd)
+	`, jobID, rangeFrom, rangeTo, int64(maxSize)).Scan(&gapStart, &gapEnd)
 	if err == sql.ErrNoRows {
 		return domain.Range{}, repos.ErrRangeIsTaken
 	}
@@ -525,7 +532,6 @@ func (p *Postgres) TryClaimRange(ctx context.Context, workerID, jobID int, lease
 	}
 
 	gapSize := gapEnd - gapStart + 1
-	const maxSize int64 = 1000
 	var size int64
 	switch {
 	case gapSize <= maxSize:

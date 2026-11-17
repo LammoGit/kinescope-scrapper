@@ -44,7 +44,8 @@ func bearerAuthMiddleware(app *app.App, roles ...string) gin.HandlerFunc {
 
 		claims, err := app.Crypto.ParseUserToken(rawToken)
 		if err != nil {
-			slog.Warn("Failed to parse bearer token", "method", method, "path", path, "error", err)
+			// SendError logs the failure with request details
+			c.Header("WWW-Authenticate", `Bearer error="invalid_token"`)
 			utility.SendError(c, err)
 			c.Abort()
 			return
@@ -99,9 +100,14 @@ func signatureAuthMiddleware(app *app.App) gin.HandlerFunc {
 			return
 		}
 
+		method := c.Request.Method
+		path := c.Request.URL.Path
+
 		sigHeader := c.GetHeader("Signature")
 		inputHeader := c.GetHeader("Signature-Input")
 		if sigHeader == "" || inputHeader == "" {
+			slog.Warn("Worker request is missing HTTP message signature headers",
+				"method", method, "path", path, "workerID", workerId)
 			c.Header("Accept-Signature",
 				`sig1=("@method" "@target-uri" "content-digest" "content-type"); alg="ed25519"`)
 			c.AbortWithStatus(http.StatusUnauthorized)
@@ -130,9 +136,16 @@ func signatureAuthMiddleware(app *app.App) gin.HandlerFunc {
 		}
 
 		if _, err := msg.Verify(sigName, *verifier); err != nil {
+			slog.Warn("Worker signature verification failed",
+				"method", method, "path", path, "workerID", workerId, "error", err)
 			c.AbortWithStatus(http.StatusUnauthorized)
 			return
 		}
+		slog.Info("Authenticated worker request",
+			"method", method,
+			"path", path,
+			"workerID", workerId,
+		)
 		c.Next()
 	}
 }

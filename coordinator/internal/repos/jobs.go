@@ -414,21 +414,27 @@ func (jr *JobRepository) TryClaimRange(ctx context.Context, workerID, jobID int,
 
 	cursor := job.Config.Range.From
 	gapEnd := job.Config.Range.To
+	maxSize := 1000
+	open := job.Config.Range.To <= 0
+	tail := true
 	for _, r := range owned {
 		if r.RangeStart > cursor {
 			gapEnd = r.RangeStart - 1
+			tail = false
 			break
 		}
 		if r.RangeEnd >= cursor {
 			cursor = r.RangeEnd + 1
 		}
 	}
-	if cursor > job.Config.Range.To {
+	if open && tail {
+		// Open-ended jobs keep carving full blocks past the frontier
+		gapEnd = cursor + maxSize - 1
+	} else if !open && cursor > job.Config.Range.To {
 		return domain.Range{}, ErrRangeIsTaken
 	}
 
 	gapSize := gapEnd - cursor + 1
-	maxSize := 1000
 	var size int
 	switch {
 	case gapSize <= maxSize:

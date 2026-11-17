@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../../api'
-import type { Job, Worker, JobConfig } from '../../types'
+import type { Job, Worker, JobConfig, WorkerConfig } from '../../types'
+import { fmtRange, parseRange } from '../../format'
 
 const emptyServer = (): WorkerConfig => ({
   name: '', host: '', ssh_port: 22, ssh_user: '', ssh_key: '',
@@ -80,13 +81,15 @@ export default function Jobs() {
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 required />
             </label>
-            <label>From
-              <input type="number" min={0} value={form.range.from}
-                onChange={(e) => setForm({ ...form, range: { ...form.range, from: Number(e.target.value) } })} />
-            </label>
-            <label>To
-              <input type="number" min={0} value={form.range.to}
-                onChange={(e) => setForm({ ...form, range: { ...form.range, to: Number(e.target.value) } })} />
+            <label>Range ([A,B], A, [A,] or empty for open-ended)
+              <input
+                placeholder="e.g. [0, 500000], 100 or [10,]"
+                defaultValue={rangeText(form.range)}
+                onChange={(e) => setForm({ ...form, ...applyRangeText(form, e.target.value) })}
+              />
+              <span className="small muted">
+                {describeRange(form.range)}
+              </span>
             </label>
             <label>Request timeout (s)
               <input type="number" min={1} value={form.request_timeout_seconds}
@@ -164,7 +167,7 @@ export default function Jobs() {
               <td><Link to={`/admin/jobs/${j.id}`}>#{j.id}</Link></td>
               <td>{j.config.name}</td>
               <td><span className={`pill status-${j.status}`}>{j.status}</span></td>
-              <td>{j.config.range.from} – {j.config.range.to}</td>
+              <td>{fmtRange(j.config.range.from, j.config.range.to)}</td>
               <td className="row-actions">
                 <button onClick={() => action(() => api.startJob(j.id))}>Start</button>
                 <button onClick={() => action(() => api.pauseJob(j.id))}>Pause</button>
@@ -186,4 +189,28 @@ export default function Jobs() {
   function removeServer(i: number) {
     setForm((f) => ({ ...f, servers: f.servers.filter((_, j) => j !== i) }))
   }
+}
+
+// Text form of the range input for editing
+function rangeText(range: { from: number; to: number }): string {
+  if (range.to > 0) {
+    if (range.from > 0) return `[${range.from}, ${range.to}]`
+    return String(range.to)
+  }
+  if (range.from > 0) return `[${range.from},]`
+  return ''
+}
+
+// Apply a range in the spec formats to the form, keeping the old range when invalid
+function applyRangeText(form: JobConfig, text: string): Partial<JobConfig> {
+  const parsed = parseRange(text)
+  return parsed ? { range: parsed } : {}
+}
+
+// Human readable description of the current form range
+function describeRange(range: { from: number; to: number }): string {
+  if (range.to > 0) {
+    return `Identifiers ${range.from} to ${range.to} inclusive (${range.to - range.from + 1} total)`
+  }
+  return `Identifiers from ${range.from} without upper bound`
 }

@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 )
 
-// ApplyMergePatch merges an RFC 7386 JSON Merge Patch into target
-// Fields present in patch overwrite target fields, null deletes,
-// nested objects merge recursively, arrays are replaced wholesale
+// ApplyMergePatch merges an RFC 7386 JSON Merge Patch into target, fields present in patch overwrite target fields, null deletes, nested objects merge recursively, arrays are replaced wholesale
 func ApplyMergePatch(target any, patch map[string]any) error {
 	existing, err := json.Marshal(target)
 	if err != nil {

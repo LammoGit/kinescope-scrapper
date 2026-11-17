@@ -114,6 +114,22 @@ func LoadUsersRouter(router gin.IRouter, app *app.App) {
 		c.JSON(http.StatusOK, gin.H{"access_token": access, "refresh_token": refresh})
 	})
 
+	// List all users (administrator only)
+	admin.GET("", func(c *gin.Context) {
+		users, err := app.User.GetUsers(c.Request.Context())
+		if err != nil {
+			utility.SendError(c, err)
+			return
+		}
+
+		list := make([]gin.H, 0, len(users))
+		for _, user := range users {
+			list = append(list, publicUser(user))
+		}
+
+		c.JSON(http.StatusOK, list)
+	})
+
 	// Get user
 	auth.GET("/:userId", func(c *gin.Context) {
 		userID, err := strconv.Atoi(c.Param("userId"))

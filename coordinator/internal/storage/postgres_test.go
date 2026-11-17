@@ -1,4 +1,4 @@
-//go:build postgres && !sqlite
+//go:build postgres
 
 package storage
 
@@ -14,17 +14,16 @@ import (
 	"coordinator/internal/repos"
 )
 
-// TestPostgresStorage is an integration test. It runs only when
-// TEST_DATABASE_URL points to a disposable PostgreSQL database, for example:
+// TestPostgresStorage is an integration test, it runs only when TEST_POSTGRES_DSN points to a disposable PostgreSQL database
+// Run it with:
 //
-//	TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/coordinator_test?sslmode=disable \
-//	  go test -tags postgres ./internal/storage
+// POSTGRES_DSN=postgres://postgres:postgres@localhost:5432/coordinator_test?sslmode=disable go test -tags postgres ./internal/storage
 func TestPostgresStorage(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL is not set")
+		t.Skip("TEST_POSTGRES_DSN is not set")
 	}
-	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("POSTGRES_DSN", dsn)
 
 	ctx := context.Background()
 	raw, err := NewStorage()
@@ -32,7 +31,7 @@ func TestPostgresStorage(t *testing.T) {
 		t.Fatalf("NewStorage: %v", err)
 	}
 	p := raw.(*Postgres)
-	t.Cleanup(func() { _ = p.Close() })
+	t.Cleanup(func() { _ = p.Shutdown(ctx) })
 
 	if _, err := p.db.ExecContext(ctx,
 		`TRUNCATE users, workers, jobs, ranges, videos, events, telemetry RESTART IDENTITY CASCADE`,
@@ -42,12 +41,12 @@ func TestPostgresStorage(t *testing.T) {
 
 	// Users
 	user, err := p.CreateUser(ctx, "tester", "tester@example.com",
-		domain.PasswordCredentials{Hash: []byte("hash"), Salt: []byte("salt")})
+		domain.PasswordCredentials{Hash: []byte("hash"), Salt: []byte("salt")}, domain.UserRoleAdministrator)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	if _, err := p.CreateUser(ctx, "other", "tester@example.com",
-		domain.PasswordCredentials{Hash: []byte("hash"), Salt: []byte("salt")}); !errors.Is(err, repos.ErrEmailIsTaken) {
+		domain.PasswordCredentials{Hash: []byte("hash"), Salt: []byte("salt")}, domain.UserRoleViewer); !errors.Is(err, repos.ErrEmailIsTaken) {
 		t.Fatalf("expected ErrEmailIsTaken, got %v", err)
 	}
 	if _, err := p.GetUserByEmail(ctx, user.Email); err != nil {
@@ -189,10 +188,14 @@ func TestPostgresStorage(t *testing.T) {
 	}
 	r := pending[0]
 
-	if err := p.TryClaimRange(ctx, r.ID, worker.ID, time.Minute); err != nil {
+	claimed, err := p.TryClaimRange(ctx, worker.ID, job.ID, time.Minute)
+	if err != nil {
 		t.Fatalf("TryClaimRange: %v", err)
 	}
-	if err := p.TryClaimRange(ctx, r.ID, worker.ID, time.Minute); !errors.Is(err, repos.ErrRangeIsTaken) {
+	if claimed.ID != r.ID || claimed.LeasedBy != worker.ID || claimed.Status != domain.JobStatusRunning {
+		t.Fatalf("unexpected claimed range: %+v", claimed)
+	}
+	if _, err := p.TryClaimRange(ctx, worker.ID, job.ID, time.Minute); !errors.Is(err, repos.ErrRangeIsTaken) {
 		t.Fatalf("expected ErrRangeIsTaken, got %v", err)
 	}
 	if renewed, err := p.RenewLeases(ctx, worker.ID, 2*time.Minute); err != nil || renewed != 1 {
@@ -208,8 +211,8 @@ func TestPostgresStorage(t *testing.T) {
 	if r.Status != domain.JobStatusCompleted || r.LeasedBy != 0 {
 		t.Fatalf("unexpected range after complete: %+v", r)
 	}
-	if err := p.TryClaimRange(ctx, r.ID, worker.ID, time.Minute); !errors.Is(err, repos.ErrRangeIsCompleted) {
-		t.Fatalf("expected ErrRangeIsCompleted, got %v", err)
+	if _, err := p.TryClaimRange(ctx, worker.ID, job.ID, time.Minute); !errors.Is(err, repos.ErrRangeIsTaken) {
+		t.Fatalf("expected ErrRangeIsTaken after completion, got %v", err)
 	}
 
 	if err := p.ReleaseRangeByID(ctx, r.ID); err != nil {
@@ -228,11 +231,22 @@ func TestPostgresStorage(t *testing.T) {
 	}
 	ranges, _ = p.GetRangesByJobID(ctx, job.ID)
 	second := ranges[len(ranges)-1]
-	if err := p.TryClaimRange(ctx, second.ID, worker.ID, time.Minute); err != nil {
+	reclaimed, err := p.TryClaimRange(ctx, worker.ID, job.ID, time.Minute)
+	if err != nil {
 		t.Fatalf("TryClaimRange second: %v", err)
+	}
+	if reclaimed.LeasedBy != worker.ID {
+		t.Fatalf("unexpected claimed range: %+v", reclaimed)
 	}
 	if err := p.ReleaseRangesByJobID(ctx, job.ID); err != nil {
 		t.Fatalf("ReleaseRangesByJobID: %v", err)
+	}
+	released, err := p.GetRangeByID(ctx, reclaimed.ID)
+	if err != nil {
+		t.Fatalf("GetRangeByID after job release: %v", err)
+	}
+	if released.LeasedBy != 0 || released.Status != domain.JobStatusCreated {
+		t.Fatalf("unexpected range after job release: %+v", released)
 	}
 	second, _ = p.GetRangeByID(ctx, second.ID)
 	if second.LeasedBy != 0 || second.Status != domain.JobStatusCreated {
@@ -246,7 +260,7 @@ func TestPostgresStorage(t *testing.T) {
 		t.Fatalf("ranges were not deleted: %d", len(ranges))
 	}
 
-	// Keep one range for the cascade check at the end.
+	// Keep one range for the cascade check at the end
 	if err := p.AddRange(ctx, domain.Range{
 		JobID: job.ID, RangeStart: 31, RangeEnd: 40,
 		Status: domain.JobStatusCreated,
@@ -325,7 +339,7 @@ func TestPostgresStorage(t *testing.T) {
 		t.Fatalf("expected ErrVideoNotFoundByID, got %v", err)
 	}
 
-	// Telemetry: two workers on the same job/range.
+	// Telemetry: two workers on the same job/range
 	secondWorker := worker
 	secondWorker.ID = 50
 	secondWorker.Config.Name = "telemetry-worker"
@@ -371,7 +385,7 @@ func TestPostgresStorage(t *testing.T) {
 		t.Fatalf("DeleteWorkerByID second: %v", err)
 	}
 
-	// Stop clears workers; delete cascades ranges and videos.
+	// Stop clears workers, delete cascades ranges and videos
 	job, err = p.StopJob(ctx, job.ID)
 	if err != nil {
 		t.Fatalf("StopJob: %v", err)

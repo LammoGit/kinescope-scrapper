@@ -1251,6 +1251,93 @@ paths:
                   value:
                     error: Internal server error
 
+  /api/workers/{workerId}/upload/{resourceId}:
+    parameters:
+      - name: workerId
+        description: The unique identifier of the uploading worker.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/WorkerId'
+      - name: resourceId
+        description: The unique identifier of the uploaded resource.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/VideoId'
+    post:
+      operationId: GetUploadLink
+      summary: Get a presigned upload link for a downloaded resource
+      description: >
+        Returns a presigned S3 PUT link the worker uploads the resource to.
+      tags:
+        - workers
+        - signed
+      security:
+        - HttpMessageSignature: []
+      responses:
+        '200':
+          description: Presigned upload link.
+          content:
+            application/json:
+              schema:
+                description: The presigned upload link.
+                type: object
+                required:
+                  - link
+                properties:
+                  link:
+                    description: Presigned S3 PUT link, valid for one hour.
+                    type: string
+                    format: uri
+                    example: "https://scrappy.ai/s3/videos/42?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600&X-Amz-Signature=abc"
+              examples:
+                uploadLink:
+                  summary: Presigned upload link for resource 42
+                  value:
+                    link: "https://scrappy.ai/s3/videos/42?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600&X-Amz-Signature=abc"
+        '400':
+          description: Incorrect path parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badRequest:
+                  summary: Malformed `resourceId`
+                  value:
+                    errors:
+                      - validation failed due to resource id not being a valid integer
+                    status: fail
+        '401':
+          description: Missing or invalid HTTP message signature.
+        '404':
+          description: No worker found for the provided `workerId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: Worker not found
+                  value:
+                    errors:
+                      - worker with the given id doesn't exist
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
+
   /api/workers/{workerId}/metrics:
     parameters:
       - name: workerId
@@ -1361,17 +1448,28 @@ paths:
       summary: An SSE stream of jobs' metrics
       tags:
         - sse
-      security: []
+      security:
+        - BearerAuth: []
       parameters:
-        - name: X-SSE-Subscribe-Jobs
-          in: header
+        - name: token
+          in: query
           required: false
-          style: simple
-          description: Comma-separated list consisting of job IDs and their ranges for which to listen.
-          explode: false
+          description: >
+            JWT access token. Browsers cannot set the Authorization header on
+            an EventSource, so the token may be passed as a query parameter.
           schema:
-            $ref: "#/components/schemas/SubscribeFilter"
-          example: "100-101,200,103"
+            type: string
+        - name: jobs
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Job IDs to listen for. When omitted, every job is listened to.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/JobId'
+          example: [100, 200, 103]
       responses:
         '200':
           description: Job metrics stream via SSE.
@@ -1382,15 +1480,22 @@ paths:
                   - description: A telemetry report for a job with a corresponding id.
                     type: object
                     properties:
-                      id:
-                        description: Job's id.
-                        type: integer
-                        format: int64
                       event:
                         type: string
-                        const: "metrics update"
+                        const: "job.metrics"
                       data:
                         $ref: '#/components/schemas/JobMetrics'
+                  - description: The initial metrics snapshot of the subscribed jobs.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "job.metrics"
+                      data:
+                        description: Metrics of every subscribed job.
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/JobMetrics'
                   - description: Just a comment used as a keep-alive message.
                     type: string
                     const: ":"
@@ -1398,31 +1503,73 @@ paths:
                 metricsUpdate:
                   summary: A metrics update event
                   value:
-                    id: 100
-                    event: metrics update
+                    event: job.metrics
                     data:
+                      range_id: 1
+                      job_id: 100
+                      worker_id: 1
                       cpu_load: 45.2
                       memory_load: 60.5
                       disk_load: 30.0
                       network_load: 20.5
                       free_space_bytes: 1073741824
-                      n_opened_files: 100
-                      n_active_connections: 10
+                      opened_files: 100
+                      active_connections: 10
                       worker_uptime: 3600
                       identifiers_per_second: 5.5
-                      n_requests: 1000
-                      n_found_materials: 800
-                      n_active_downloads: 5
-                      n_bytes_per_second: 1048576
+                      requests: 1000
+                      found_materials: 800
+                      active_downloads: 5
+                      bytes_per_second: 1048576
                       avg_check_speed: 0.5
                       avg_download_speed: 2.5
                       download_queue_size: 100
-                      n_repeated_attempts: 10
-                      n_final_errors: 2
+                      repeated_attempts: 10
+                      final_errors: 2
                       oldest_in_queue: 120
+                snapshot:
+                  summary: The initial metrics snapshot
+                  value:
+                    event: job.metrics
+                    data:
+                      - range_id: 1
+                        job_id: 100
+                        worker_id: 1
+                        cpu_load: 45.2
+                        memory_load: 60.5
+                        disk_load: 30.0
+                        network_load: 20.5
+                        free_space_bytes: 1073741824
+                        opened_files: 100
+                        active_connections: 10
+                        worker_uptime: 3600
+                        identifiers_per_second: 5.5
+                        requests: 1000
+                        found_materials: 800
+                        active_downloads: 5
+                        bytes_per_second: 1048576
+                        avg_check_speed: 0.5
+                        avg_download_speed: 2.5
+                        download_queue_size: 100
+                        repeated_attempts: 10
+                        final_errors: 2
+                        oldest_in_queue: 120
                 keepAlive:
                   summary: Keep-alive comment
                   value: ":"
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
         '500':
           description: Unexpected error.
           content:
@@ -1433,7 +1580,9 @@ paths:
                 unexpected:
                   summary: Internal error
                   value:
-                    error: Internal server error
+                    errors:
+                      - Internal server error
+                    status: fail
 
   /api/stream/workers/metrics:
     get:
@@ -1441,60 +1590,128 @@ paths:
       summary: An SSE stream of workers' metrics
       tags:
         - sse
-      security: []
+      security:
+        - BearerAuth: []
       parameters:
-        - name: X-SSE-Subscribe-Workers
-          in: header
+        - name: token
+          in: query
           required: false
-          style: simple
-          description: Comma-separated list consisting of worker IDs and their ranges for which to listen.
-          explode: false
+          description: >
+            JWT access token. Browsers cannot set the Authorization header on
+            an EventSource, so the token may be passed as a query parameter.
           schema:
-            $ref: "#/components/schemas/SubscribeFilter"
-          example: "1-3,5"
+            type: string
+        - name: workers
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Worker IDs to listen for. When omitted, every worker is listened to.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/WorkerId'
+          example: [1, 3]
       responses:
         '200':
           description: Worker metrics stream via SSE.
           content:
             text/event-stream:
               itemSchema:
-                type: object
-                properties:
-                  id:
-                    description: Worker's id.
-                    type: integer
-                    format: int64
-                  event:
+                oneOf:
+                  - description: A telemetry report for a worker with a corresponding id.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "worker.metrics"
+                      data:
+                        $ref: '#/components/schemas/WorkerMetrics'
+                  - description: The initial metrics snapshot of the subscribed workers.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "worker.metrics"
+                      data:
+                        description: Metrics of every subscribed worker.
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WorkerMetrics'
+                  - description: Just a comment used as a keep-alive message.
                     type: string
-                    const: "metrics update"
-                  data:
-                    $ref: '#/components/schemas/WorkerMetrics'
+                    const: ":"
               examples:
                 metricsUpdate:
                   summary: A worker metrics update event
                   value:
-                    id: 1
-                    event: metrics update
+                    event: worker.metrics
                     data:
+                      range_id: 1
+                      job_id: 100
+                      worker_id: 1
                       cpu_load: 45.2
                       memory_load: 60.5
                       disk_load: 30.0
                       network_load: 20.5
                       free_space_bytes: 1073741824
-                      n_opened_files: 100
-                      n_active_connections: 10
+                      opened_files: 100
+                      active_connections: 10
                       worker_uptime: 3600
                       identifiers_per_second: 5.5
-                      n_requests: 1000
-                      n_found_materials: 800
-                      n_active_downloads: 5
-                      n_bytes_per_second: 1048576
+                      requests: 1000
+                      found_materials: 800
+                      active_downloads: 5
+                      bytes_per_second: 1048576
                       avg_check_speed: 0.5
                       avg_download_speed: 2.5
                       download_queue_size: 100
-                      n_repeated_attempts: 10
-                      n_final_errors: 2
+                      repeated_attempts: 10
+                      final_errors: 2
                       oldest_in_queue: 120
+                snapshot:
+                  summary: The initial metrics snapshot
+                  value:
+                    event: worker.metrics
+                    data:
+                      - range_id: 1
+                        job_id: 100
+                        worker_id: 1
+                        cpu_load: 45.2
+                        memory_load: 60.5
+                        disk_load: 30.0
+                        network_load: 20.5
+                        free_space_bytes: 1073741824
+                        opened_files: 100
+                        active_connections: 10
+                        worker_uptime: 3600
+                        identifiers_per_second: 5.5
+                        requests: 1000
+                        found_materials: 800
+                        active_downloads: 5
+                        bytes_per_second: 1048576
+                        avg_check_speed: 0.5
+                        avg_download_speed: 2.5
+                        download_queue_size: 100
+                        repeated_attempts: 10
+                        final_errors: 2
+                        oldest_in_queue: 120
+                keepAlive:
+                  summary: Keep-alive comment
+                  value: ":"
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
         '500':
           description: Unexpected error.
           content:
@@ -1505,10 +1722,569 @@ paths:
                 unexpected:
                   summary: Internal error
                   value:
-                    error: Internal server error
+                    errors:
+                      - Internal server error
+                    status: fail
+
+  /api/stream/jobs/updates:
+    get:
+      operationId: SSEJobsUpdates
+      summary: An SSE stream of job updates
+      tags:
+        - sse
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: >
+            JWT access token. Browsers cannot set the Authorization header on
+            an EventSource, so the token may be passed as a query parameter.
+          schema:
+            type: string
+        - name: jobs
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Job IDs to listen for. When omitted, every job is listened to.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/JobId'
+          example: [100]
+      responses:
+        '200':
+          description: Job updates stream via SSE.
+          content:
+            text/event-stream:
+              itemSchema:
+                oneOf:
+                  - description: The initial snapshot of the subscribed jobs.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "job.update"
+                      data:
+                        description: Every subscribed job.
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Job'
+                  - description: A job was created or updated.
+                    type: object
+                    properties:
+                      event:
+                        oneOf:
+                          - type: string
+                            const: "job.create"
+                          - type: string
+                            const: "job.update"
+                      data:
+                        $ref: '#/components/schemas/Job'
+                  - description: A job changed its state.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "job.state_change"
+                      data:
+                        type: object
+                        properties:
+                          job_id:
+                            $ref: '#/components/schemas/JobId'
+                          state:
+                            $ref: '#/components/schemas/JobStatus'
+                  - description: A job was deleted.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "job.delete"
+                      data:
+                        type: object
+                        properties:
+                          job_id:
+                            $ref: '#/components/schemas/JobId'
+                  - description: Just a comment used as a keep-alive message.
+                    type: string
+                    const: ":"
+              examples:
+                snapshot:
+                  summary: The initial job snapshot
+                  value:
+                    event: job.update
+                    data:
+                      - id: 100
+                        name: Scrape batch #1
+                        status: running
+                stateChange:
+                  summary: A job state change event
+                  value:
+                    event: job.state_change
+                    data:
+                      job_id: 100
+                      state: running
+                keepAlive:
+                  summary: Keep-alive comment
+                  value: ":"
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
+
+  /api/stream/workers/updates:
+    get:
+      operationId: SSEWorkersUpdates
+      summary: An SSE stream of worker updates
+      tags:
+        - sse
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: >
+            JWT access token. Browsers cannot set the Authorization header on
+            an EventSource, so the token may be passed as a query parameter.
+          schema:
+            type: string
+        - name: workers
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Worker IDs to listen for. When omitted, every worker is listened to.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/WorkerId'
+          example: [1]
+      responses:
+        '200':
+          description: Worker updates stream via SSE.
+          content:
+            text/event-stream:
+              itemSchema:
+                oneOf:
+                  - description: The initial snapshot of the subscribed workers.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "worker.update"
+                      data:
+                        description: Every subscribed worker.
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Worker'
+                  - description: A worker was created or updated.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "worker.update"
+                      data:
+                        $ref: '#/components/schemas/Worker'
+                  - description: A worker was removed.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "worker.delete"
+                      data:
+                        type: object
+                        properties:
+                          id:
+                            $ref: '#/components/schemas/WorkerId'
+                  - description: Just a comment used as a keep-alive message.
+                    type: string
+                    const: ":"
+              examples:
+                snapshot:
+                  summary: The initial worker snapshot
+                  value:
+                    event: worker.update
+                    data:
+                      - id: 1
+                        name: worker-1
+                update:
+                  summary: A worker update event
+                  value:
+                    event: worker.update
+                    data:
+                      id: 1
+                      name: worker-1
+                      host: 192.168.1.10
+                      ssh_port: 22
+                      ssh_user: root
+                      threads: 8
+                      storage_path: /data/videos
+                      min_free_space_gb: 50
+                keepAlive:
+                  summary: Keep-alive comment
+                  value: ":"
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
+
+  /api/stream/workers/commands:
+    get:
+      operationId: SSEWorkersCommands
+      summary: An SSE stream of commands for workers
+      description: >
+        Delivers commands to subscribed workers, e.g. their current
+        configuration or the removal of a worker. This channel carries no
+        bearer authentication, workers subscribe with their id only.
+      tags:
+        - sse
+      security: []
+      parameters:
+        - name: workers
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Worker IDs to listen for. When omitted, every worker is listened to.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/WorkerId'
+          example: [1]
+      responses:
+        '200':
+          description: Worker commands stream via SSE.
+          content:
+            text/event-stream:
+              itemSchema:
+                oneOf:
+                  - description: The current configuration of a worker.
+                    type: object
+                    properties:
+                      event:
+                        description: The `worker-{id}` topic the message was published to.
+                        type: string
+                        example: worker-1
+                      data:
+                        $ref: '#/components/schemas/Worker'
+                  - description: A command to stop serving a removed worker.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        example: worker-1
+                      data:
+                        type: object
+                        properties:
+                          id:
+                            $ref: '#/components/schemas/WorkerId'
+                  - description: Just a comment used as a keep-alive message.
+                    type: string
+                    const: ":"
+              examples:
+                config:
+                  summary: A worker configuration command
+                  value:
+                    event: worker-1
+                    data:
+                      id: 1
+                      name: worker-1
+                      host: 192.168.1.10
+                      ssh_port: 22
+                      ssh_user: root
+                      threads: 8
+                      storage_path: /data/videos
+                      min_free_space_gb: 50
+                delete:
+                  summary: A worker removal command
+                  value:
+                    event: worker-1
+                    data:
+                      id: 1
+                keepAlive:
+                  summary: Keep-alive comment
+                  value: ":"
+        '400':
+          description: Incorrect query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badRequest:
+                  summary: Malformed `workers` parameter
+                  value:
+                    errors:
+                      - received workers value is not a valid integer
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
+
+  /api/stream/events:
+    get:
+      operationId: SSEEvents
+      summary: An SSE stream of coordinator and worker events
+      tags:
+        - sse
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: >
+            JWT access token. Browsers cannot set the Authorization header on
+            an EventSource, so the token may be passed as a query parameter.
+          schema:
+            type: string
+        - name: jobs
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Job IDs to listen for.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/JobId'
+          example: [100]
+        - name: workers
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Worker IDs to listen for.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/WorkerId'
+          example: [1]
+      responses:
+        '200':
+          description: Events stream via SSE.
+          content:
+            text/event-stream:
+              itemSchema:
+                oneOf:
+                  - description: The initial event snapshot of the subscribed topics.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "event"
+                      data:
+                        description: Every stored event of the subscribed topics.
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Event'
+                  - description: A newly recorded event.
+                    type: object
+                    properties:
+                      event:
+                        type: string
+                        const: "event"
+                      data:
+                        $ref: '#/components/schemas/Event'
+                  - description: Just a comment used as a keep-alive message.
+                    type: string
+                    const: ":"
+              examples:
+                snapshot:
+                  summary: The initial event snapshot
+                  value:
+                    event: event
+                    data:
+                      - time: 1700000000
+                        level: Info
+                        component: Job service
+                        job_id: 100
+                        worker_id: 0
+                        range_id: 0
+                        resource_id: 0
+                        operation_type: create
+                        result: success
+                        error_code: 200
+                        message: job is created successfully
+                event:
+                  summary: A newly recorded event
+                  value:
+                    event: event
+                    data:
+                      time: 1700000100
+                      level: Info
+                      component: Job service
+                      job_id: 100
+                      worker_id: 0
+                      range_id: 0
+                      resource_id: 0
+                      operation_type: start
+                      result: success
+                      error_code: 200
+                      message: job is started successfully
+                keepAlive:
+                  summary: Keep-alive comment
+                  value: ":"
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
 
   # --- Users ---
-  /api/user/register:
+  /api/users:
+    get:
+      operationId: GetUsers
+      summary: Get a list of all users
+      tags:
+        - users
+        - user_role_administrator
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of all users.
+          content:
+            application/json:
+              schema:
+                description: The list of users.
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+              examples:
+                empty:
+                  summary: No users yet
+                  value: []
+                someUsers:
+                  summary: A couple of users
+                  value:
+                    - id: 1
+                      username: johndoe
+                      email: johndoe@example.com
+                      role: viewer
+                    - id: 2
+                      username: admin
+                      email: admin@example.com
+                      role: administrator
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
+        '403':
+          description: Only administrators may list users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                forbidden:
+                  summary: Not an administrator
+                  value:
+                    errors:
+                      - administrator role is required
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
+
+  /api/users/register:
     post:
       operationId: RegisterUser
       summary: Register a new user via HTML form
@@ -1551,7 +2327,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: "https://scrappy.ai/api/user/1"
+              example: "https://scrappy.ai/api/users/1"
           content:
             application/json:
               schema:
@@ -1593,7 +2369,7 @@ paths:
                   value:
                     error: Internal server error
 
-  /api/user/login:
+  /api/users/login:
     post:
       operationId: LoginUser
       summary: Authenticate a user via HTML form and issue a token pair
@@ -1660,7 +2436,7 @@ paths:
                   value:
                     error: Internal server error
 
-  /api/user/refresh:
+  /api/users/refresh:
     post:
       operationId: RefreshToken
       summary: Exchange a refresh token for a new token pair
@@ -1720,7 +2496,7 @@ paths:
                   value:
                     error: Internal server error
 
-  /api/user/{userId}:
+  /api/users/{userId}:
     parameters:
       - name: userId
         description: The unique identifier of the user.
@@ -1847,6 +2623,112 @@ paths:
                   summary: Internal error
                   value:
                     error: Internal server error
+    post:
+      operationId: ChangeUserPassword
+      summary: Change the password of the user corresponding to the provided `userId`
+      description: >
+        Administrators may change any user's password without providing the
+        current one, everyone else must present it.
+      tags:
+        - users
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Current and new password.
+        required: true
+        content:
+          application/json:
+            schema:
+              description: Password change payload.
+              type: object
+              required:
+                - new_password
+              properties:
+                current_password:
+                  description: The user's current password, not required for administrators.
+                  type: string
+                  format: password
+                  example: hunter2hunter2
+                new_password:
+                  description: The user's new password.
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: newpassword123
+            examples:
+              change:
+                summary: Change password with the current one
+                value:
+                  current_password: hunter2hunter2
+                  new_password: newpassword123
+      responses:
+        '204':
+          description: Successfully changed the password.
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                validation:
+                  summary: Validation error
+                  value:
+                    errors:
+                      - "new_password: password must be at least 8 characters"
+                    status: fail
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
+        '403':
+          description: Current password is wrong or the user is not allowed to change this password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                wrongPassword:
+                  summary: Current password is wrong
+                  value:
+                    errors:
+                      - password is invalid
+                    status: fail
+        '404':
+          description: No user found for the provided `userId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: User not found
+                  value:
+                    errors:
+                      - user with the given id doesn't exist
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
     delete:
       operationId: DeleteUser
       summary: Delete the user corresponding to the provided `userId`
@@ -1879,6 +2761,121 @@ paths:
                   summary: Internal error
                   value:
                     error: Internal server error
+
+  /api/users/{userId}/role:
+    parameters:
+      - name: userId
+        description: The unique identifier of the user.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/UserId'
+    patch:
+      operationId: EditUserRole
+      summary: Change the role of the user corresponding to the provided `userId`
+      tags:
+        - users
+        - user_role_administrator
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: New role of the user.
+        required: true
+        content:
+          application/json:
+            schema:
+              description: Role change payload.
+              type: object
+              required:
+                - user_role
+              properties:
+                user_role:
+                  $ref: '#/components/schemas/UserRole'
+            examples:
+              promote:
+                summary: Promote a user to operator
+                value:
+                  user_role: operator
+      responses:
+        '200':
+          description: User after the role change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                updated:
+                  summary: User with the new role
+                  value:
+                    id: 1
+                    username: johndoe
+                    email: johndoe@example.com
+                    role: operator
+        '400':
+          description: Incorrect body syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                validation:
+                  summary: Unknown role
+                  value:
+                    errors:
+                      - "user_role: role must be one of viewer, operator, administrator"
+                    status: fail
+        '401':
+          description: Missing, invalid, or expired access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unauthorized:
+                  summary: Token is expired
+                  value:
+                    errors:
+                      - received token is expired
+                    status: fail
+        '403':
+          description: Only administrators may change roles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                forbidden:
+                  summary: Not an administrator
+                  value:
+                    errors:
+                      - administrator role is required
+                    status: fail
+        '404':
+          description: No user found for the provided `userId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notFound:
+                  summary: User not found
+                  value:
+                    errors:
+                      - user with the given id doesn't exist
+                    status: fail
+        '500':
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unexpected:
+                  summary: Internal error
+                  value:
+                    errors:
+                      - Internal server error
+                    status: fail
 
   # --- Web Service ---
   /api/service/search:
@@ -1927,18 +2924,8 @@ paths:
                   summary: A page of search results
                   value:
                     items:
-                      - id: 42
-                        title: Python tutorial part 1
-                        description: Getting started with Python
-                        duration_seconds: 120
-                        video_url: https://example.com/videos/42.mp4
-                        average_score: 8.5
-                        reactions_count: 100
-                        comments_count: 5
-                        created_at: 1700000000
-                    total: 1
-                    limit: 20
-                    offset: 0
+                      - $ref: '#/components/schemas/Video'
+                    quantity: 1
         '400':
           description: Incorrect query parameters.
           content:
@@ -1991,17 +2978,8 @@ paths:
                   summary: A page of recommended videos
                   value:
                     items:
-                      - id: 42
-                        title: Python tutorial part 1
-                        duration_seconds: 120
-                        video_url: https://example.com/videos/42.mp4
-                        average_score: 9.1
-                        reactions_count: 200
-                        comments_count: 8
-                        created_at: 1700000000
-                    total: 1
-                    limit: 20
-                    offset: 0
+                      - $ref: '#/components/schemas/Video'
+                    quantity: 1
         '500':
           description: Unexpected error.
           content:
@@ -2034,20 +3012,39 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Video'
+                description: The video and its streaming link.
+                type: object
+                required:
+                  - video_id
+                  - url
+                  - metadata
+                properties:
+                  video_id:
+                    $ref: '#/components/schemas/VideoId'
+                  url:
+                    description: >
+                      Presigned link the video is streamed from, valid for
+                      24 hours.
+                    type: string
+                    format: uri
+                    example: "https://scrappy.ai/s3/videos/42?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=86400&X-Amz-Signature=abc"
+                  metadata:
+                    $ref: '#/components/schemas/VideoMetadata'
               examples:
                 video:
-                  summary: A single video
+                  summary: A single video with its streaming link
                   value:
-                    id: 42
-                    title: Python tutorial part 1
-                    description: Getting started with Python
-                    duration_seconds: 120
-                    video_url: https://example.com/videos/42.mp4
-                    average_score: 8.5
-                    reactions_count: 100
-                    comments_count: 5
-                    created_at: 1700000000
+                    video_id: 42
+                    url: "https://scrappy.ai/s3/videos/42?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=86400&X-Amz-Signature=abc"
+                    metadata:
+                      title: Python tutorial part 1
+                      source_url: https://kinescope.io/42
+                      download_url: https://kinescope.io/42.mp4
+                      found_at: 1700000000
+                      downloaded_at: 1700000060
+                      file_size: 104857600
+                      mime_type: video/mp4
+                      status: ready
         '404':
           description: No video found for the provided `videoId`.
           content:
@@ -2071,7 +3068,14 @@ paths:
                   value:
                     error: Internal server error
 
-  /api/service/video/recommended:
+  /api/service/video/{videoId}/recommended:
+    parameters:
+      - name: videoId
+        description: The unique identifier of the video to find recommendations for.
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/VideoId'
     get:
       operationId: GetVideoRecommendations
       summary: Get videos recommended for a specific video
@@ -2079,22 +3083,25 @@ paths:
         - service
       security: []
       parameters:
-        - name: videoId
-          in: query
-          required: true
-          description: Identifier of the video to find recommendations for.
-          schema:
-            $ref: '#/components/schemas/VideoId'
-          example: 42
         - name: limit
           in: query
-          required: false
+          required: true
+          description: Maximum number of results to return.
           schema:
             type: integer
             format: int32
-            default: 20
-            maximum: 100
+            minimum: 1
           example: 20
+        - name: offset
+          in: query
+          required: false
+          description: Number of results to skip.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         '200':
           description: List of recommended videos.
@@ -2107,28 +3114,21 @@ paths:
                   summary: Recommendations for video 42
                   value:
                     items:
-                      - id: 43
-                        title: Python tutorial part 2
-                        duration_seconds: 140
-                        video_url: https://example.com/videos/43.mp4
-                        average_score: 8.2
-                        reactions_count: 90
-                        comments_count: 3
-                        created_at: 1700000100
-                    total: 1
-                    limit: 20
-                    offset: 0
+                      - $ref: '#/components/schemas/Video'
+                    quantity: 1
         '400':
-          description: Missing or invalid `videoId`.
+          description: Incorrect path or query parameters.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
               examples:
-                missing:
-                  summary: Missing `videoId`
+                missingLimit:
+                  summary: Missing `limit`
                   value:
-                    error: Query parameter 'videoId' is required
+                    errors:
+                      - "limit: limit is required"
+                    status: fail
         '500':
           description: Unexpected error.
           content:
@@ -2701,6 +3701,86 @@ components:
       type: string
       example: job started
 
+    Event:
+      description: A single log entry emitted by the coordinator or a worker.
+      type: object
+      required:
+        - time
+        - level
+        - component
+        - resource_id
+        - operation_type
+        - result
+        - error_code
+        - message
+      properties:
+        time:
+          description: Time the event happened at.
+          type: string
+          format: date-time
+        level:
+          description: Severity of the event.
+          type: string
+          enum:
+            - Error
+            - Warning
+            - Info
+            - Debug
+          example: Info
+        component:
+          description: Component that emitted the event.
+          type: string
+          example: Job service
+        job_id:
+          description: Identifier of the job the event belongs to, 0 when it doesn't belong to any job.
+          type: integer
+          format: int64
+          example: 100
+        worker_id:
+          description: Identifier of the worker the event belongs to, 0 when it doesn't belong to any worker.
+          type: integer
+          format: int64
+          example: 0
+        range_id:
+          description: Identifier of the range the event belongs to, 0 when it doesn't belong to any range.
+          type: integer
+          format: int64
+          example: 0
+        resource_id:
+          description: Identifier of the resource the event belongs to.
+          type: integer
+          format: int64
+          example: 0
+        operation_type:
+          description: Operation the event was recorded for.
+          type: string
+          example: create
+        result:
+          description: Result of the operation, "success" or "fail".
+          type: string
+          example: success
+        error_code:
+          description: HTTP status code of the operation, 200 on success.
+          type: integer
+          format: int32
+          example: 200
+        message:
+          description: Human readable event message.
+          type: string
+          example: job is created successfully
+      example:
+        time: 1700000000
+        level: Info
+        component: Job service
+        job_id: 100
+        worker_id: 0
+        range_id: 0
+        resource_id: 0
+        operation_type: create
+        result: success
+        error_code: 200
+        message: job is created successfully
+
     JobMetrics:
       description: Aggregated telemetry data from workers of some job.
       $ref: '#/components/schemas/WorkerMetrics'
@@ -3119,7 +4199,7 @@ components:
         refresh_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidHlwIjoicmVmcmVzaCJ9.def
 
     UserUpdate:
-      description: Fields to update on a user.
+      description: Fields to update on a user. The password and role are changed via their own endpoints.
       type: object
       properties:
         username:
@@ -3137,14 +4217,6 @@ components:
           description: New avatar, base64-encoded.
           type: string
           format: byte
-        password:
-          description: New password.
-          type: string
-          format: password
-          minLength: 8
-          example: newpassword123
-        role:
-          $ref: '#/components/schemas/UserRole'
       example:
         username: john_doe
 
@@ -3156,106 +4228,139 @@ components:
       example: 42
 
     Video:
-      description: Video metadata.
+      description: Downloaded video belonging to a job.
       type: object
       required:
         - id
-        - title
+        - job_id
+        - metadata
+        - storage_metadata
       properties:
         id:
           $ref: '#/components/schemas/VideoId'
+        job_id:
+          $ref: '#/components/schemas/JobId'
+        metadata:
+          $ref: '#/components/schemas/VideoMetadata'
+        storage_metadata:
+          $ref: '#/components/schemas/VideoStorageMetadata'
+      example:
+        id: 42
+        job_id: 100
+        metadata:
+          title: Python tutorial part 1
+          source_url: https://kinescope.io/42
+          download_url: https://kinescope.io/42.mp4
+          found_at: 1700000000
+          downloaded_at: 1700000060
+          file_size: 104857600
+          mime_type: video/mp4
+          status: ready
+        storage_metadata:
+          bucket_name: videos
+          object_key: "42"
+          checksum: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+          server_name: s3
+          local_path: /data/videos/42.mp4
+
+    VideoMetadata:
+      description: Metadata of a downloaded video.
+      type: object
+      required:
+        - title
+        - source_url
+        - download_url
+        - found_at
+        - downloaded_at
+        - file_size
+        - mime_type
+        - status
+      properties:
         title:
           description: Video title.
           type: string
           example: Python tutorial part 1
-        description:
-          description: Video description.
-          type: string
-          example: Getting started with Python
-        duration_seconds:
-          description: Video duration in seconds.
-          type: integer
-          format: int64
-          example: 120
-        thumbnail:
-          description: Video thumbnail, base64-encoded.
-          type: string
-          format: byte
-        video_url:
-          description: URL of the video file.
+        source_url:
+          description: URL of the video page the video was found on.
           type: string
           format: uri
-          example: https://example.com/videos/42.mp4
-        average_score:
-          description: Average score given by users.
-          type: number
-          format: double
-          example: 8.5
-        reactions_count:
-          description: Number of reactions recorded.
-          type: integer
-          format: int64
-          example: 100
-        comments_count:
-          description: Number of comments on the video.
-          type: integer
-          format: int64
-          example: 5
-        created_at:
-          description: Unix timestamp (seconds) of video creation.
+          example: https://kinescope.io/42
+        download_url:
+          description: URL the video file was downloaded from.
+          type: string
+          format: uri
+          example: https://kinescope.io/42.mp4
+        found_at:
+          description: Unix timestamp (seconds) of when the video was found.
           type: integer
           format: int64
           example: 1700000000
-      example:
-        id: 42
-        title: Python tutorial part 1
-        description: Getting started with Python
-        duration_seconds: 120
-        video_url: https://example.com/videos/42.mp4
-        average_score: 8.5
-        reactions_count: 100
-        comments_count: 5
-        created_at: 1700000000
+        downloaded_at:
+          description: Unix timestamp (seconds) of when the video finished downloading.
+          type: integer
+          format: int64
+          example: 1700000060
+        file_size:
+          description: Size of the video file in bytes.
+          type: integer
+          format: int64
+          example: 104857600
+        mime_type:
+          description: MIME type of the video file.
+          type: string
+          example: video/mp4
+        status:
+          description: Status of the download.
+          type: string
+          example: ready
+
+    VideoStorageMetadata:
+      description: Information used for accessing the video in storage.
+      type: object
+      required:
+        - checksum
+      properties:
+        bucket_name:
+          description: S3 bucket the video is stored in.
+          type: string
+          example: videos
+        object_key:
+          description: S3 object key of the video.
+          type: string
+          example: "42"
+        checksum:
+          description: SHA-256 checksum of the video file.
+          type: string
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+        server_name:
+          description: Storage server the video is stored on.
+          type: string
+          example: s3
+        local_path:
+          description: Local path of the video on the worker that downloaded it.
+          type: string
+          example: /data/videos/42.mp4
 
     VideoList:
-      description: Paginated list of videos.
+      description: List of videos.
       type: object
       required:
         - items
-        - total
+        - quantity
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/Video'
-        total:
-          description: Total number of matching videos.
+        quantity:
+          description: Number of videos in the list.
           type: integer
           format: int64
           example: 1
-        limit:
-          description: Maximum number of items returned.
-          type: integer
-          format: int32
-          example: 20
-        offset:
-          description: Number of items skipped.
-          type: integer
-          format: int32
-          example: 0
       example:
         items:
-          - id: 42
-            title: Python tutorial part 1
-            duration_seconds: 120
-            video_url: https://example.com/videos/42.mp4
-            average_score: 8.5
-            reactions_count: 100
-            comments_count: 5
-            created_at: 1700000000
-        total: 1
-        limit: 20
-        offset: 0
+          - $ref: '#/components/schemas/Video'
+        quantity: 1
 
     VideoScore:
       description: Score a video.
@@ -3397,14 +4502,24 @@ components:
       description: Definition for the general error class.
       type: object
       required:
-        - error
+        - errors
+        - status
       properties:
-        error:
-          description: A human readable error message.
+        errors:
+          description: Human readable error messages.
+          type: array
+          items:
+            type: string
+          example:
+            - Internal server error
+        status:
+          description: Status of the failed request, always "fail".
           type: string
-          example: Internal server error
+          const: "fail"
       example:
-        error: Internal server error
+        errors:
+          - Internal server error
+        status: fail
 
     SubscribeFilter:
       description: Filter used to subscribe to certain identifiers.

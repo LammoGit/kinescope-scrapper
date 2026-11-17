@@ -4,7 +4,6 @@ import (
 	"context"
 	"coordinator/internal/app"
 	"coordinator/internal/domain"
-	"coordinator/internal/services"
 	"coordinator/internal/utility"
 	"errors"
 	"fmt"
@@ -325,41 +324,20 @@ func LoadWorkersRouter(router gin.IRouter, app *app.App) {
 
 	// Get upload link for video download
 	worker.POST("/:workerId/upload/:resourceId", func(c *gin.Context) {
-		// IN DEVELOPMENT
-		// Should make keys for S3 storage using VideoService, not CryptoService
-
-		workerID, err := strconv.Atoi(c.Param("workerId"))
-		if err != nil {
-			utility.SendError(c, ErrInvalidWorkerID)
-			return
-		}
-
 		resourceID, err := strconv.Atoi(c.Param("resourceId"))
 		if err != nil {
 			utility.SendError(c, ErrInvalidResourceID)
 			return
 		}
 
-		ctx := c.Request.Context()
-		worker, err := app.Worker.GetWorkerByID(ctx, workerID)
-		if err != nil {
-			utility.SendError(c, err)
-			return
-		}
-
-		token, err := app.Crypto.SignUploadToken(services.Upload{
-			WorkerID:     workerID,
-			ResourceID:   resourceID,
-			SignatureKey: worker.PublicKey,
-		})
+		link, err := app.Video.UploadLink(resourceID)
 		if err != nil {
 			utility.SendError(c, err)
 			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"link":         "http://localhost:5433/upload",
-			"access_token": token,
+			"link": link,
 		})
 	})
 }

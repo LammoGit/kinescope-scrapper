@@ -39,7 +39,7 @@ type JobConfig struct {
 	Servers                  []WorkerConfig `json:"servers" form:"servers" binding:"omitempty"`
 }
 
-// JobRange is the inclusive range of identifiers a job processes
+// JobRange is the inclusive range of identifiers a job processes, a zero To leaves the upper bound open
 type JobRange struct {
 	From int `json:"from" form:"from" binding:"omitempty,min=0"`
 	To   int `json:"to" form:"to" binding:"omitempty,gtefield=From"`

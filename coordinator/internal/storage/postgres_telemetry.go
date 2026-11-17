@@ -140,7 +140,7 @@ func (p *Postgres) GetJobMetricsByID(ctx context.Context, id int) (domain.Metric
 }
 
 func (p *Postgres) metricsByID(ctx context.Context, column string, id int) ([]domain.Metrics, error) {
-	// column is a private constant chosen by the callers above.
+	// column is a private constant chosen by the callers above
 	rows, err := p.db.QueryContext(ctx,
 		`SELECT `+metricsColumns+` FROM telemetry WHERE `+column+` = $1 ORDER BY job_id, range_id, worker_id`,
 		id,

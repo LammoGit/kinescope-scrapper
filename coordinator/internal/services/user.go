@@ -5,6 +5,8 @@ import (
 	"coordinator/internal/domain"
 	st "coordinator/internal/storage"
 	"coordinator/internal/utility"
+	"coordinator/pkg/sse"
+	"log/slog"
 )
 
 // Errors
@@ -19,7 +21,7 @@ type UserService struct {
 }
 
 // NewUserService creates a new UserService
-func NewUserService(storage st.Storage) (*UserService, error) {
+func NewUserService(_ context.Context, _ *sse.Hub, storage st.Storage) (*UserService, error) {
 	if storage == nil {
 		return nil, ErrUserStorageUnavailable
 	}
@@ -32,12 +34,21 @@ func (s *UserService) Register(ctx context.Context, username string, email strin
 		return domain.User{}, ErrBadCredentials
 	}
 
-	return s.storage.CreateUser(ctx, username, email, domain.PasswordCredentials{
+	user, err := s.storage.CreateUser(ctx, username, email, domain.PasswordCredentials{
 		Hash: hash,
 		Salt: salt,
 	},
 		domain.UserRoleViewer,
 	)
+	if err == nil {
+		slog.Info("User registered", "userID", user.ID, "username", user.Username, "email", user.Email)
+	}
+	return user, err
+}
+
+// GetUsers returns every user
+func (s *UserService) GetUsers(ctx context.Context) ([]domain.User, error) {
+	return s.storage.GetUsers(ctx)
 }
 
 // GetUserByEmail returns a user with the given email
@@ -56,5 +67,9 @@ func (s *UserService) ReplaceUser(ctx context.Context, user domain.User) error {
 
 // DeleteByID deletes a user with the given id
 func (s *UserService) DeleteByID(ctx context.Context, id int) error {
-	return s.storage.DeleteUserByID(ctx, id)
+	err := s.storage.DeleteUserByID(ctx, id)
+	if err == nil {
+		slog.Info("User deleted", "userID", id)
+	}
+	return err
 }

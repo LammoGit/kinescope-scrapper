@@ -21,7 +21,7 @@ type TelemetryService struct {
 }
 
 // NewTelemetryService creates a new TelemetryService
-func NewTelemetryService(hub *sse.Hub, storage st.Storage) (*TelemetryService, error) {
+func NewTelemetryService(_ context.Context, hub *sse.Hub, storage st.Storage) (*TelemetryService, error) {
 	if storage == nil {
 		return nil, ErrTelemetryStorageUnavailable
 	}
@@ -56,17 +56,22 @@ func (s *TelemetryService) AddWorkerMetricsByID(ctx context.Context, id int, met
 	}
 
 	if s.hub != nil {
-		workerTopic := fmt.Sprintf("metrics-worker-%d", id)
+		// Publish to the topics that the /stream routes subscribe to, using the event names that the frontend listens for
 		s.hub.PublishAll(
-			[]string{workerTopic, "metrics-worker-*"},
-			sse.SSEMessage{Event: workerTopic, Data: metrics},
+			[]string{
+				fmt.Sprintf("worker-metrics-%d", id),
+				"worker-metrics-*",
+			},
+			sse.SSEMessage{Event: "worker.metrics", Data: metrics},
 		)
 
 		if metrics.JobID > 0 {
-			jobTopic := fmt.Sprintf("metrics-job-%d", metrics.JobID)
 			s.hub.PublishAll(
-				[]string{jobTopic, "metrics-job-*"},
-				sse.SSEMessage{Event: jobTopic, Data: metrics},
+				[]string{
+					fmt.Sprintf("job-metrics-%d", metrics.JobID),
+					"job-metrics-*",
+				},
+				sse.SSEMessage{Event: "job.metrics", Data: metrics},
 			)
 		}
 	}

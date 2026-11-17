@@ -13,6 +13,8 @@ import (
 )
 
 func LoadStreamRouter(router gin.IRouter, app *app.App) {
+	user := router.Group("", bearerAuthMiddleware(app))
+
 	// Channel for worker to receive commands
 	router.GET("/workers/commands", func(c *gin.Context) {
 		var topics []string
@@ -32,7 +34,7 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 	})
 
 	// Channel for user to receive worker updates
-	router.GET("/workers/updates", func(c *gin.Context) {
+	user.GET("/workers/updates", func(c *gin.Context) {
 		var topics []string
 		workerIds, ok := c.GetQueryArray("workers")
 		if !ok {
@@ -69,7 +71,7 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 	})
 
 	// Channel for user to receive worker metrics
-	router.GET("/workers/metrics", func(c *gin.Context) {
+	user.GET("/workers/metrics", func(c *gin.Context) {
 		var topics []string
 		workerIds, ok := c.GetQueryArray("workers")
 		if !ok {
@@ -106,18 +108,18 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 	})
 
 	// Channel for user to receive job updates
-	router.GET("/jobs/updates", func(c *gin.Context) {
+	user.GET("/jobs/updates", func(c *gin.Context) {
 		var topics []string
 		jobIds, ok := c.GetQueryArray("jobs")
 		if !ok {
-			topics = []string{"job-metrics-*"}
+			topics = []string{"job-update-*"}
 		} else {
 			for _, id := range jobIds {
 				if _, err := strconv.Atoi(id); err != nil {
 					c.AbortWithStatus(http.StatusBadRequest)
 					return
 				}
-				topics = append(topics, fmt.Sprintf("job-metrics-%s", id))
+				topics = append(topics, fmt.Sprintf("job-update-%s", id))
 			}
 		}
 		app.Hub.ServeSSE(c, topics, func() ([]sse.SSEMessage, bool) {
@@ -143,7 +145,7 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 	})
 
 	// Channel for user to receive job metrics
-	router.GET("/jobs/metrics", func(c *gin.Context) {
+	user.GET("/jobs/metrics", func(c *gin.Context) {
 		var topics []string
 		jobIds, ok := c.GetQueryArray("jobs")
 		if !ok {
@@ -168,19 +170,19 @@ func LoadStreamRouter(router gin.IRouter, app *app.App) {
 					}
 					return []sse.SSEMessage{{Event: "job.metrics", Data: metrics}}, true
 				}
-				id, _ := strconv.Atoi(strings.TrimPrefix("job.metrics", "job-metrics-"))
+				id, _ := strconv.Atoi(strings.TrimPrefix(topic, "job-metrics-"))
 				metrics, err := app.Telemetry.GetJobMetricsByID(ctx, id)
 				if err != nil {
 					continue
 				}
-				msgs = append(msgs, sse.SSEMessage{Event: topic, Data: []domain.Metrics{metrics}})
+				msgs = append(msgs, sse.SSEMessage{Event: "job.metrics", Data: []domain.Metrics{metrics}})
 			}
 			return msgs, true
 		})
 	})
 
 	// Channel for user to receive events
-	router.GET("/events", func(c *gin.Context) {
+	user.GET("/events", func(c *gin.Context) {
 		var topics []string
 		jobIds := c.QueryArray("jobs")
 		workerIds := c.QueryArray("workers")

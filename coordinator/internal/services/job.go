@@ -7,6 +7,7 @@ import (
 	"coordinator/internal/utility"
 	"coordinator/pkg/sse"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -26,6 +27,9 @@ type JobService struct {
 	leaseTime  time.Duration
 	mu         sync.RWMutex
 }
+
+// Work estimate used for open-ended jobs, they never run out of identifiers
+const openRangeRemaining = 1 << 30
 
 // NewJobService creates a new JobService
 func NewJobService(ctx context.Context, hub *sse.Hub, storage st.Storage) (*JobService, error) {
@@ -55,6 +59,7 @@ func (s *JobService) CreateJob(ctx context.Context, name string, config domain.J
 		msg = err.Error()
 	} else {
 		s.publish("job.create", job)
+		slog.Info("Job created", "jobID", job.ID, "name", job.Config.Name)
 	}
 	s.record(ctx, job.ID, "create", result, code, msg)
 	return job, err
@@ -82,6 +87,7 @@ func (s *JobService) ReplaceJobByID(ctx context.Context, job domain.Job) error {
 		msg = err.Error()
 	} else {
 		s.publish("job.update", job)
+		slog.Info("Job updated", "jobID", job.ID)
 	}
 	s.record(ctx, job.ID, "update", result, code, msg)
 	return err
@@ -98,6 +104,7 @@ func (s *JobService) DeleteJob(ctx context.Context, id int) error {
 		code = utility.StatusFromError(err)
 		msg = err.Error()
 	} else if s.hub != nil {
+		slog.Info("Job deleted", "jobID", id)
 		msg := sse.SSEMessage{
 			Event: "job.delete",
 			Data:  map[string]any{"job_id": id},
@@ -106,6 +113,7 @@ func (s *JobService) DeleteJob(ctx context.Context, id int) error {
 		var topics []string
 		topics = append(topics, "job-*", "worker-*")
 		topics = append(topics, fmt.Sprintf("job-%d", id))
+		topics = append(topics, fmt.Sprintf("job-update-%d", id), "job-update-*")
 		for _, id := range job.Workers {
 			topics = append(topics, fmt.Sprintf("worker-%d", id))
 		}
@@ -144,6 +152,9 @@ func (s *JobService) StopJob(ctx context.Context, id int) error {
 // changeState changes state of a job, records event, and publishes state change message to the hub
 func (s *JobService) changeState(ctx context.Context, id int, operation, message, state string, change func(context.Context, int) (domain.Job, error)) error {
 	job, err := change(ctx, id)
+	if err == nil {
+		slog.Info("Job state changed", "jobID", id, "operation", operation, "state", state)
+	}
 
 	// Log state change event
 	result := "success"
@@ -164,6 +175,7 @@ func (s *JobService) changeState(ctx context.Context, id int, operation, message
 	var topics []string
 	topics = append(topics, "job-*", "worker-*")
 	topics = append(topics, fmt.Sprintf("job-%d", id))
+	topics = append(topics, fmt.Sprintf("job-update-%d", id), "job-update-*")
 	for _, id := range job.Workers {
 		topics = append(topics, fmt.Sprintf("worker-%d", id))
 	}
@@ -182,6 +194,11 @@ func (s *JobService) publish(event string, job domain.Job) {
 	}
 	topic := fmt.Sprintf("job-%d", job.ID)
 	s.hub.PublishAll([]string{topic, "job-*"}, sse.SSEMessage{Event: event, Data: job})
+	// Notify subscribers of /stream/jobs/updates about the change
+	s.hub.PublishAll(
+		[]string{fmt.Sprintf("job-update-%d", job.ID), "job-update-*"},
+		sse.SSEMessage{Event: event, Data: job},
+	)
 }
 
 // record logs job event and publishes message to the hub
@@ -203,7 +220,7 @@ func (s *JobService) record(ctx context.Context, id int, operation string, resul
 	if s.hub != nil {
 		s.hub.PublishAll(
 			[]string{"events-*", fmt.Sprintf("events-job-%d", id)},
-			sse.SSEMessage{Event: "events", Data: stored},
+			sse.SSEMessage{Event: "event", Data: stored},
 		)
 	}
 }
@@ -263,6 +280,7 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 
 		remaining := 0
 		frontier := job.Config.Range.From - 1
+		open := job.Config.Range.To <= 0
 		for _, r := range ranges {
 			if r.RangeEnd > frontier {
 				frontier = r.RangeEnd
@@ -272,7 +290,10 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 			}
 			remaining += r.RangeEnd - r.NextID + 1
 		}
-		if frontier < job.Config.Range.To {
+		if open {
+			// Open-ended jobs always have work, the estimate is a large stand-in
+			remaining += openRangeRemaining
+		} else if frontier < job.Config.Range.To {
 			remaining += job.Config.Range.To - frontier
 		}
 		if remaining <= 0 {
@@ -284,7 +305,9 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 			workers = 1
 		}
 		var ttf time.Duration
-		if m, err := s.storage.GetJobMetricsByID(ctx, job.ID); err == nil && m.IdentifiersPerSecond > 0 {
+		if open {
+			ttf = time.Duration(1<<62 - 1)
+		} else if m, err := s.storage.GetJobMetricsByID(ctx, job.ID); err == nil && m.IdentifiersPerSecond > 0 {
 			perSec := m.IdentifiersPerSecond * float64(workers)
 			ttf = time.Duration(float64(remaining) / perSec * float64(time.Second))
 		} else {

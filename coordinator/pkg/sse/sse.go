@@ -3,6 +3,7 @@ package sse
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 	"uuid"
@@ -62,6 +63,7 @@ func (h *Hub) run() {
 		select {
 		case s := <-h.reg:
 			// Worker is registered
+			slog.Debug("SSE subscriber registered", "subscriptionID", s.id, "topics", s.topics)
 			for _, topic := range s.topics {
 				m := h.subs[topic]
 				if m == nil {
@@ -72,6 +74,7 @@ func (h *Hub) run() {
 			}
 		case id := <-h.unreg:
 			// Worker is unregistered
+			slog.Debug("SSE subscriber unregistered", "subscriptionID", id)
 			for _, m := range h.subs {
 				ch, ok := m[id]
 				if ok {
@@ -86,6 +89,8 @@ func (h *Hub) run() {
 				case ch <- p.msg:
 					// Sent message to each channel in the topic
 				default:
+					slog.Warn("SSE subscriber channel is full, message dropped",
+						"topic", p.topic, "event", p.msg.Event)
 				}
 			}
 		}

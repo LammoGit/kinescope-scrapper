@@ -3,6 +3,7 @@ package utility
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -17,11 +18,12 @@ import (
 
 // Error kinds
 var (
-	ValidationError = errors.New("")
-	NotFoundError   = errors.New("")
-	ConflictError   = errors.New("")
-	InternalError   = errors.New("")
-	ForbiddenError  = errors.New("")
+	ValidationError   = errors.New("")
+	NotFoundError     = errors.New("")
+	ConflictError     = errors.New("")
+	InternalError     = errors.New("")
+	ForbiddenError    = errors.New("")
+	UnauthorizedError = errors.New("")
 )
 
 // NewValidationError returns a new validation error with the given text
@@ -49,6 +51,11 @@ func NewForbiddenError(v string) error {
 	return fmt.Errorf("%w%s", ForbiddenError, v)
 }
 
+// NewUnauthorizedError returns a new unauthorized error with the given text
+func NewUnauthorizedError(v string) error {
+	return fmt.Errorf("%w%s", UnauthorizedError, v)
+}
+
 // StatusFromError gets a status from an error
 func StatusFromError(err error) int {
 	switch {
@@ -60,6 +67,8 @@ func StatusFromError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ForbiddenError):
 		return http.StatusForbidden
+	case errors.Is(err, UnauthorizedError):
+		return http.StatusUnauthorized
 	default:
 		return http.StatusInternalServerError
 	}
@@ -67,7 +76,22 @@ func StatusFromError(err error) int {
 
 // SendError sends an error with the HTTP status matching its kind
 func SendError(c *gin.Context, err error) {
-	c.AbortWithStatusJSON(StatusFromError(err), gin.H{
+	status := StatusFromError(err)
+
+	// Log every error response, client errors are worth a warning and server errors deserve a full error entry
+	attrs := []any{
+		"method", c.Request.Method,
+		"path", c.Request.URL.Path,
+		"status", status,
+		"error", err.Error(),
+	}
+	if status >= 500 {
+		slog.Error("Request failed", attrs...)
+	} else {
+		slog.Warn("Request failed", attrs...)
+	}
+
+	c.AbortWithStatusJSON(status, gin.H{
 		"errors": []string{
 			err.Error(),
 		},
@@ -84,8 +108,7 @@ func init() {
 		panic("gin validator is not *validator.Validate")
 	}
 
-	// Report fields by their wire name instead of their
-	// Go name inside translated messages
+	// Report fields by their wire name instead of their Go name inside translated messages
 	v.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		for _, tag := range []string{"json", "form"} {
 			name, _, _ := strings.Cut(fld.Tag.Get(tag), ",")
@@ -104,6 +127,12 @@ func init() {
 
 // SendBindingError sends every field error produced by the validator
 func SendBindingError(c *gin.Context, err error) {
+	slog.Warn("Request validation failed",
+		"method", c.Request.Method,
+		"path", c.Request.URL.Path,
+		"error", err.Error(),
+	)
+
 	var errs validator.ValidationErrors
 	if !errors.As(err, &errs) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{

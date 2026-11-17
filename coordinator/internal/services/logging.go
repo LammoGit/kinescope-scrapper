@@ -21,7 +21,7 @@ type EventService struct {
 }
 
 // NewEventService creates a new EventService
-func NewEventService(hub *sse.Hub, storage st.Storage) (*EventService, error) {
+func NewEventService(_ context.Context, hub *sse.Hub, storage st.Storage) (*EventService, error) {
 	if storage == nil {
 		return nil, ErrEventStorageUnavailable
 	}

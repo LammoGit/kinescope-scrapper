@@ -15,8 +15,22 @@ services:
       retries: 5
     restart: always
 
-  # s3:
-  
+  s3:
+    image: dxflrs/garage:v2.5.0
+    env_file:
+      - .env
+    environment:
+      GARAGE_RPC_SECRET: ${S3_RPC_SECRET}
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY}
+      GARAGE_DEFAULT_BUCKET: ${S3_BUCKET}
+    command: /garage server --single-node --default-bucket
+    container_name: scrappy_s3
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml
+      - garage_data:/var/lib/garage
+    restart: always
+
   backend:
     build:
       context: .
@@ -53,6 +67,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - s3
     volumes:
       - static:/static
       - ./cert.crt:/etc/nginx/cert.crt
@@ -62,3 +77,4 @@ volumes:
   postgres_data:
   static:
   keys:
+  garage_data:

@@ -22,6 +22,28 @@ func scanUser(s rowScanner) (domain.User, error) {
 	return u, err
 }
 
+func (p *Postgres) GetUsers(ctx context.Context) ([]domain.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err := p.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]domain.User, 0)
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
 func (p *Postgres) GetUserByID(ctx context.Context, id int) (domain.User, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.User{}, err

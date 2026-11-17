@@ -13,6 +13,16 @@ export class ApiError extends Error {
 const getAccessToken  = () => localStorage.getItem('access_token')
 const getRefreshToken = () => localStorage.getItem('refresh_token')
 
+// Dispatched (after tokens are cleared) when the session cannot be restored:
+// the AuthProvider listens for it and RequireAuth redirects to /login.
+export const AUTH_EXPIRED_EVENT = 'auth:expired'
+
+function notifyAuthExpired() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
+}
+
 let refreshing: Promise<boolean> | null = null
 
 async function doRefresh(): Promise<boolean> {
@@ -28,6 +38,7 @@ async function doRefresh(): Promise<boolean> {
       })
       if (!res.ok) return false
       const data = await res.json()
+      if (!data?.access_token || !data?.refresh_token) return false
       localStorage.setItem('access_token', data.access_token)
       localStorage.setItem('refresh_token', data.refresh_token)
       return true
@@ -56,6 +67,8 @@ async function request<T>(
 
   if (res.status === 401 && auth && retry) {
     if (await doRefresh()) return request<T>(path, options, auth, false)
+    // Refresh failed: the session is over, drop tokens and let the app react
+    notifyAuthExpired()
   }
 
   if (!res.ok) {
@@ -67,7 +80,78 @@ async function request<T>(
   return res.json() as Promise<T>
 }
 
+/**
+ * EventSource wrapper that authenticates via a `token` query parameter
+ * (EventSource cannot set an Authorization header) and transparently
+ * reconnects with a fresh token after the access token is refreshed.
+ */
+export class EventStream {
+  private listeners = new Map<string, Set<(e: MessageEvent) => void>>()
+  private es: EventSource | null = null
+  private stopped = false
+  private attempts = 0
+
+  constructor(private path: string) {
+    this.connect()
+  }
+
+  private connect(delay = 0) {
+    if (this.stopped) return
+    const attempt = () => {
+      if (this.stopped) return
+      const token = getAccessToken() || ''
+      const sep = this.path.includes('?') ? '&' : '?'
+      const es = new EventSource(
+        `${API_BASE}${this.path}${sep}token=${encodeURIComponent(token)}`,
+      )
+      this.es = es
+
+      es.onopen = () => { this.attempts = 0 }
+      es.onerror = () => {
+        if (this.stopped) return
+        // CLOSED means the server rejected the connection (e.g. expired or
+        // missing token). CONNECTING means a transient network issue and the
+        // browser will retry on its own.
+        if (es.readyState !== EventSource.CLOSED) return
+        es.close()
+        void (async () => {
+          const ok = await doRefresh()
+          if (this.stopped) return
+          if (!ok) { notifyAuthExpired(); return }
+          this.attempts++
+          this.connect(Math.min(5000, 250 * this.attempts))
+        })()
+      }
+    }
+    if (delay > 0) setTimeout(attempt, delay)
+    else attempt()
+  }
+
+  addEventListener(type: string, listener: (e: MessageEvent) => void) {
+    let set = this.listeners.get(type)
+    if (!set) {
+      set = new Set()
+      this.listeners.set(type, set)
+    }
+    set.add(listener)
+    this.es?.addEventListener(type, listener as EventListener)
+    return this
+  }
+
+  close() {
+    this.stopped = true
+    this.es?.close()
+  }
+}
+
+/** Accept both the array snapshots sent on connect and single live objects */
+function asArray<T>(data: unknown): T[] {
+  return Array.isArray(data) ? data as T[] : [data as T]
+}
+
 export const api = {
+  asArray,
+
   // auth
   register: (username: string, email: string, password: string) =>
     request<PublicUser>('/users/register', {
@@ -80,6 +164,7 @@ export const api = {
     }, false),
 
   // users
+  listUsers: () => request<PublicUser[]>('/users'),
   getUser: (id: number) => request<PublicUser>(`/users/${id}`),
   patchUser: (id: number, patch: any) =>
     request<PublicUser>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

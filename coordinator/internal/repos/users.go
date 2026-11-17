@@ -4,6 +4,7 @@ import (
 	"context"
 	"coordinator/internal/domain"
 	"coordinator/internal/utility"
+	"sort"
 	"sync"
 	"time"
 )
@@ -20,6 +21,7 @@ var (
 
 // IUserRepository interface specifying methods that *UserRepository must implement
 type IUserRepository interface {
+	GetUsers(ctx context.Context) ([]domain.User, error)
 	GetUserByID(ctx context.Context, id int) (domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
 	CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials, role string) (domain.User, error)
@@ -40,6 +42,23 @@ func NewUserRepository() *UserRepository {
 		users:  make(map[int]domain.User),
 		nextID: 1,
 	}
+}
+
+// GetUsers returns every user, ordered by id
+func (ur *UserRepository) GetUsers(ctx context.Context) ([]domain.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	ur.mu.RLock()
+	defer ur.mu.RUnlock()
+
+	users := make([]domain.User, 0, len(ur.users))
+	for _, u := range ur.users {
+		users = append(users, u)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	return users, nil
 }
 
 // GetUserByID returns a user with the given id, or error if wasn't found

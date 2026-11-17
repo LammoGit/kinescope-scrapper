@@ -44,11 +44,7 @@ export default function Terminal() {
 
     const resizeDisp = term.onResize(() => { /* future: send resize frames */ })
 
-    const resize = () => term.fit?.()
-    window.addEventListener('resize', resize)
-
     return () => {
-      window.removeEventListener('resize', resize)
       dataDisp.dispose()
       resizeDisp.dispose()
       ws.close()

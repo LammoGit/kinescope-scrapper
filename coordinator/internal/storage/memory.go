@@ -2,7 +2,10 @@
 
 package storage
 
-import "coordinator/internal/repos"
+import (
+	"context"
+	"coordinator/internal/repos"
+)
 
 var _ Storage = &Memory{}
 
@@ -26,4 +29,9 @@ func NewStorage() (Storage, error) {
 		UserRepository:      repos.NewUserRepository(),
 		TelemetryRepository: repos.NewTelemetryRepository(),
 	}, nil
+}
+
+// Shutdown graceful shutdown
+func (s *Memory) Shutdown(ctx context.Context) error {
+	return nil
 }

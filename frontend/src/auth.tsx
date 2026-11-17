@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { api } from './api'
+import { api, AUTH_EXPIRED_EVENT } from './api'
 import type { PublicUser, UserRole } from './types'
 
 function decodeJwt(token: string): any {
@@ -43,6 +43,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (userId && role) setUser({ id: userId, role })
     }
     setLoading(false)
+  }, [])
+
+  // Drop the session when the API layer reports that it cannot be restored
+  // (e.g. the access token expired and the refresh token was rejected)
+  useEffect(() => {
+    const onExpired = () => setUser(null)
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired)
   }, [])
 
   const login = async (email: string, password: string) => {
