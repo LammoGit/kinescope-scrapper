@@ -104,7 +104,7 @@ func main() {
 	addr := fmt.Sprintf(":%d", *port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: router,
+		Handler: http.NewCrossOriginProtection().Handler(router),
 		// Make ctx parent context of all request contexts
 		BaseContext: func(_ net.Listener) context.Context {
 			return ctx
