@@ -22,7 +22,6 @@ func RequestLogger() gin.HandlerFunc {
 			"duration", time.Since(start).String(),
 		}
 		if raw := c.Request.URL.RawQuery; raw != "" {
-			// Never log bearer tokens passed as query parameters
 			q := c.Request.URL.Query()
 			if _, ok := q["token"]; ok {
 				q["token"] = []string{"[REDACTED]"}

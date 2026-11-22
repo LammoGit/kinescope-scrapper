@@ -291,7 +291,6 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 			remaining += r.RangeEnd - r.NextID + 1
 		}
 		if open {
-			// Open-ended jobs always have work, the estimate is a large stand-in
 			remaining += openRangeRemaining
 		} else if frontier < job.Config.Range.To {
 			remaining += job.Config.Range.To - frontier
