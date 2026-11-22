@@ -1,4 +1,4 @@
-//go:build postgres && !sqlite
+//go:build postgres
 
 package storage
 
