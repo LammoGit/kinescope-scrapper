@@ -1,0 +1,252 @@
+package services
+
+import (
+	"context"
+	"coordinator/internal/domain"
+	st "coordinator/internal/storage"
+	"coordinator/internal/utility"
+	"coordinator/pkg/sse"
+	"crypto/rand"
+	"crypto/subtle"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/argon2"
+)
+
+// Errors
+var (
+	ErrInvalidToken            = utility.NewUnauthorizedError("received token is invalid")
+	ErrTokenExpired            = utility.NewUnauthorizedError("received token is expired")
+	ErrFailedToReadSalt        = utility.NewInternalError("crypto service failed to write random bytes to a salt buffer")
+	ErrEmptyIssuer             = utility.NewInternalError("empty issuer is given to the crypto service")
+	ErrEmptySecret             = utility.NewInternalError("empty secret is given to the crypto service")
+	ErrUnexpectedSigningMethod = utility.NewValidationError("unexpected signing method")
+)
+
+// UserClaims claims of user's JWT token
+type UserClaims struct {
+	UserID   int    `json:"user_id"`   // User's id
+	UserRole string `json:"user_role"` // User's role
+	Type     string `json:"typ"`       // Type of token: "access" or "refresh"
+	jwt.RegisteredClaims
+}
+
+// Argon2Config configuration of argon2 hashing algorithm
+type Argon2Config struct {
+	Memory     uint32 // Memory cost of computing a hash in KiB
+	Iterations uint32 // Number of passes over the Memory
+	Threads    uint8  // Number of threads used
+	KeyLen     uint32 // Length of a generated hash
+	SaltSize   int    // Length of random salt used for hashing
+}
+
+// CryptoOption functions ran on CryptoService object at construction
+type CryptoOption func(s *CryptoService)
+
+// WithArgonMemory CryptoService option that sets memory used by Argon2 in KiB
+func WithArgonMemory(mem uint32) CryptoOption {
+	return func(s *CryptoService) {
+		if mem != 0 {
+			s.argonConfig.Memory = mem
+		}
+	}
+}
+
+// WithArgonIterations CryptoService option that sets number of passes in Argon2
+func WithArgonIterations(iter uint32) CryptoOption {
+	return func(s *CryptoService) {
+		if iter != 0 {
+			s.argonConfig.Iterations = iter
+		}
+	}
+}
+
+// WithArgonThreads CryptoService option that sets number of threads used for Argon2 calculation
+func WithArgonThreads(threads uint8) CryptoOption {
+	return func(s *CryptoService) {
+		if threads != 0 {
+			s.argonConfig.Threads = threads
+		}
+	}
+}
+
+// WithKeyLen CryptoService option that sets length of a password hash generated
+func WithKeyLen(keyLen uint32) CryptoOption {
+	return func(s *CryptoService) {
+		if keyLen != 0 {
+			s.argonConfig.KeyLen = keyLen
+		}
+	}
+}
+
+// WithSaltSize CryptoService option that sets length of a random salt generated for hashing
+func WithSaltSize(saltSize int) CryptoOption {
+	return func(s *CryptoService) {
+		if saltSize > 0 {
+			s.argonConfig.SaltSize = saltSize
+		}
+	}
+}
+
+// WithArgonConfig CryptoService option that sets full Argon2 hashing algorithm config without validation
+func WithArgonConfig(config Argon2Config) CryptoOption {
+	return func(s *CryptoService) {
+		s.argonConfig = config
+	}
+}
+
+// WithUserAccessTTL CryptoService option that sets TTL of a user access token
+func WithUserAccessTTL(ttl time.Duration) CryptoOption {
+	return func(s *CryptoService) {
+		s.userAccessTTL = ttl
+	}
+}
+
+// WithUserRefreshTTL CryptoService option that sets TTL of a user refresh token
+func WithUserRefreshTTL(ttl time.Duration) CryptoOption {
+	return func(s *CryptoService) {
+		s.userRefreshTTL = ttl
+	}
+}
+
+// CryptoService object used for managing passwords and JWT
+type CryptoService struct {
+	secret         []byte        // Secret used by password hashing algorithm
+	issuer         string        // Issuer set in generated JWT tokens
+	argonConfig    Argon2Config  // Config of Argon2 password hashing algorithm
+	userAccessTTL  time.Duration // TTL of generating user access tokens
+	userRefreshTTL time.Duration // TTL of generating user refresh tokens
+}
+
+// NewCryptoService returns new CryptoService with set secret and issuer, and with applies options to it
+func NewCryptoService(_ context.Context, _ *sse.Hub, _ st.Storage, secret []byte, issuer string, opts ...CryptoOption) (*CryptoService, error) {
+	if len(secret) == 0 {
+		return nil, ErrEmptySecret
+	}
+	if issuer == "" {
+		return nil, ErrEmptyIssuer
+	}
+
+	service := &CryptoService{
+		secret: secret,
+		issuer: issuer,
+		argonConfig: Argon2Config{
+			Memory:     64 * 1024,
+			Iterations: 3,
+			Threads:    2,
+			KeyLen:     32,
+			SaltSize:   16,
+		},
+		userAccessTTL:  30 * time.Minute,
+		userRefreshTTL: 7 * 24 * time.Hour,
+	}
+
+	for _, opt := range opts {
+		opt(service)
+	}
+
+	return service, nil
+}
+
+// HashPassword hashes user password and returns hash with random salt used during hash generation
+func (s *CryptoService) HashPassword(password string) (hash, salt []byte, err error) {
+	salt = make([]byte, s.argonConfig.SaltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, nil, ErrFailedToReadSalt
+	}
+	hash = argon2.IDKey(
+		[]byte(password),
+		salt,
+		s.argonConfig.Iterations,
+		s.argonConfig.Memory,
+		s.argonConfig.Threads,
+		s.argonConfig.KeyLen,
+	)
+	return hash, salt, nil
+}
+
+// VerifyPassword check whether given password matches salt-hash pair
+func (s *CryptoService) VerifyPassword(password string, creds domain.PasswordCredentials) bool {
+	if len(creds.Salt) == 0 || len(creds.Hash) == 0 {
+		return false
+	}
+	computed := argon2.IDKey(
+		[]byte(password),
+		creds.Salt,
+		s.argonConfig.Iterations,
+		s.argonConfig.Memory,
+		s.argonConfig.Threads,
+		uint32(len(creds.Hash)),
+	)
+
+	// Use constant-time comparison to prevent timing attacks
+	return subtle.ConstantTimeCompare(computed, creds.Hash) == 1
+}
+
+// signUser private function used to sign one user's token of given type, and with given duration
+func (s *CryptoService) signUser(user domain.User, typ string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := UserClaims{
+		UserID:   user.ID,
+		UserRole: user.Role,
+		Type:     typ,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    s.issuer,
+			Subject:   fmt.Sprintf("%d", user.ID),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.secret)
+}
+
+// SignUserTokens returns signed acess and refresh user's JWT tokens in form of strings
+func (s *CryptoService) SignUserTokens(user domain.User) (access, refresh string, err error) {
+	access, err = s.signUser(user, "access", s.userAccessTTL)
+	if err != nil {
+		return "", "", err
+	}
+	refresh, err = s.signUser(user, "refresh", s.userRefreshTTL)
+	if err != nil {
+		return "", "", err
+	}
+	return access, refresh, nil
+}
+
+// parseUserClaims parses a signed user token into UserClaims, mapping JWT library errors to distinct unauthorized errors so that expired tokens can be told apart from malformed ones
+func parseUserClaims(tokenString string, keyFunc jwt.Keyfunc) (*UserClaims, error) {
+	var claims UserClaims
+	token, err := jwt.ParseWithClaims(tokenString, &claims, keyFunc)
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, ErrTokenExpired
+		}
+		return nil, ErrInvalidToken
+	}
+	if !token.Valid {
+		return nil, ErrInvalidToken
+	}
+	return &claims, nil
+}
+
+// ParseUserToken parses user's JWT token string into UserClaims
+func (s *CryptoService) ParseUserToken(tokenString string) (*UserClaims, error) {
+	claims, err := parseUserClaims(tokenString, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("%w: %v", ErrUnexpectedSigningMethod, t.Header["alg"])
+		}
+		return s.secret, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if claims.Issuer != s.issuer {
+		return nil, ErrInvalidToken
+	}
+	return claims, nil
+}

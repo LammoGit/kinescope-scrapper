@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16
+    env_file:
+      - .env
+    container_name: scrappy_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  s3:
+    image: dxflrs/garage:v2.5.0
+    env_file:
+      - .env
+    environment:
+      GARAGE_RPC_SECRET: ${S3_RPC_SECRET}
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY}
+      GARAGE_DEFAULT_BUCKET: ${S3_BUCKET}
+    command: /garage server --single-node --default-bucket
+    container_name: scrappy_s3
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml
+      - garage_data:/var/lib/garage
+    restart: always
+
+  backend:
+    build:
+      context: .
+      dockerfile: coordinator/Dockerfile
+      args:
+        GO_TAGS: "postgres"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DSN: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable"
+    container_name: scrappy_backend
+    ports:
+      - "8080:8080"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - keys:/keys
+    restart: always
+
+  frontend:
+    build: ./frontend/
+    env_file: .env
+    command: cp -r /app/build/. /static/
+    volumes:
+      - static:/static
+
+  gateway:
+    build: ./nginx/
+    env_file: .env
+    ports:
+      - 9000:443
+    depends_on:
+      - backend
+      - frontend
+      - s3
+    volumes:
+      - static:/static
+      - ./cert.crt:/etc/nginx/cert.crt
+      - ./cert.key:/etc/nginx/cert.key
+
+volumes:
+  postgres_data:
+  static:
+  keys:
+  garage_data:

@@ -1,4 +1,9 @@
 *.yaml
+!openapi.yaml
 *.key
 *.crt
 AGENTS.md
+.env
+dist*
+build*
+node_modules/
