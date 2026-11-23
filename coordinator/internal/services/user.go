@@ -7,6 +7,7 @@ import (
 	"coordinator/internal/utility"
 	"coordinator/pkg/sse"
 	"log/slog"
+	"time"
 )
 
 // Errors
@@ -34,12 +35,19 @@ func (s *UserService) Register(ctx context.Context, username string, email strin
 		return domain.User{}, ErrBadCredentials
 	}
 
-	user, err := s.storage.CreateUser(ctx, username, email, domain.PasswordCredentials{
-		Hash: hash,
-		Salt: salt,
-	},
-		domain.UserRoleViewer,
-	)
+	user := domain.User{
+		ID:       0,
+		Username: username,
+		Email:    email,
+		Password: domain.PasswordCredentials{
+			Hash: hash,
+			Salt: salt,
+		},
+		Role:      domain.UserRoleViewer,
+		Avatar:    "",
+		CreatedAt: time.Now(),
+	}
+	err := s.storage.SaveUser(ctx, &user)
 	if err == nil {
 		slog.Info("User registered", "userID", user.ID, "username", user.Username, "email", user.Email)
 	}
@@ -62,7 +70,7 @@ func (s *UserService) GetUserByID(ctx context.Context, id int) (domain.User, err
 }
 
 func (s *UserService) ReplaceUser(ctx context.Context, user domain.User) error {
-	return s.storage.ReplaceUser(ctx, user)
+	return s.storage.SaveUser(ctx, &user)
 }
 
 // DeleteByID deletes a user with the given id

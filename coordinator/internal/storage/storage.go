@@ -2,15 +2,15 @@ package storage
 
 import (
 	"context"
-	"coordinator/internal/repos"
+	"coordinator/internal/domain"
 )
 
 type Storage interface {
-	repos.IJobRepository
-	repos.IWorkerRepository
-	repos.IVideoRepository
-	repos.IEventRepository
-	repos.IUserRepository
-	repos.ITelemetryRepository
+	domain.IJobRepository
+	domain.IWorkerRepository
+	domain.IVideoRepository
+	domain.IEventRepository
+	domain.IUserRepository
+	domain.ITelemetryRepository
 	Shutdown(ctx context.Context) error
 }

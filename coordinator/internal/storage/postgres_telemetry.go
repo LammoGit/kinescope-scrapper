@@ -29,7 +29,7 @@ func scanMetrics(s rowScanner) (domain.Metrics, error) {
 	return m, err
 }
 
-func (p *Postgres) AddMetrics(ctx context.Context, metrics domain.Metrics) error {
+func (p *Postgres) SaveMetrics(ctx context.Context, metrics domain.Metrics) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func (p *Postgres) GetWorkerMetricsByID(ctx context.Context, id int) (domain.Met
 		return domain.Metrics{}, err
 	}
 	if len(metrics) == 0 {
-		return domain.Metrics{}, errWorkerNotFound
+		return domain.Metrics{}, ErrWorkerNotFoundByID
 	}
 	return domain.AverageMetrics(metrics...), nil
 }
@@ -134,7 +134,7 @@ func (p *Postgres) GetJobMetricsByID(ctx context.Context, id int) (domain.Metric
 		return domain.Metrics{}, err
 	}
 	if len(metrics) == 0 {
-		return domain.Metrics{}, errJobNotFound
+		return domain.Metrics{}, ErrJobNotFoundByID
 	}
 	return domain.AverageMetrics(metrics...), nil
 }

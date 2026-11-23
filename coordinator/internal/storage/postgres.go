@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"coordinator/internal/repos"
-
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -188,13 +186,3 @@ func withNotFound(err, target error) error {
 	}
 	return err
 }
-
-// Repository errors are reused so HTTP status mapping stays identical to the in-memory implementation
-var (
-	errJobNotFound    = repos.ErrJobNotFoundByID
-	errRangeNotFound  = repos.ErrRangeNotFoundByID
-	errWorkerNotFound = repos.ErrWorkerNotFoundByID
-	errVideoNotFound  = repos.ErrVideoNotFoundByID
-	errEventNotFound  = repos.ErrEventNotFoundByID
-	errUserNotFound   = repos.ErrUserNotFoundByID
-)

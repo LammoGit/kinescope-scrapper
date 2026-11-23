@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -173,12 +174,22 @@ func New(ctx context.Context, hub *sse.Hub, storage st.Storage) (*App, error) {
 			return app, err
 		}
 
+		user := domain.User{
+			ID:       0,
+			Username: adminUsername,
+			Email:    adminEmail,
+			Password: domain.PasswordCredentials{
+				Hash: hash,
+				Salt: salt,
+			},
+			Role:      domain.UserRoleAdministrator,
+			Avatar:    "",
+			CreatedAt: time.Now(),
+		}
+
 		// Try to create an admin account
-		if _, err := storage.CreateUser(ctx, adminUsername, adminEmail, domain.PasswordCredentials{
-			Hash: hash,
-			Salt: salt,
-		}, domain.UserRoleAdministrator); err == nil {
-			slog.Info("Administrator account created", "username", adminUsername, "email", adminEmail)
+		if err := storage.SaveUser(ctx, &user); err == nil {
+			slog.Info("Administrator account created", "username", adminUsername, "email", user.Email)
 		}
 	}
 

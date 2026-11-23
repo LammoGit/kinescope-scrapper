@@ -4,10 +4,8 @@ package storage
 
 import (
 	"context"
-	"time"
 
 	"coordinator/internal/domain"
-	"coordinator/internal/repos"
 )
 
 const userColumns = `
@@ -22,6 +20,55 @@ func scanUser(s rowScanner) (domain.User, error) {
 	return u, err
 }
 
+// SaveUser adds new user if id is 0 and updates otherwise.
+func (p *Postgres) SaveUser(ctx context.Context, user *domain.User) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if user.ID == 0 {
+		err := p.db.QueryRowContext(ctx, `
+			INSERT INTO users (
+				username, email, password_hash, password_salt, role, avatar, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id`,
+			user.Username, user.Email, user.Password.Hash, user.Password.Salt,
+			user.Role, user.Avatar, user.CreatedAt,
+		).Scan(&user.ID)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return ErrEmailIsTaken
+			}
+			return err
+		}
+		return nil
+	}
+
+	result, err := p.db.ExecContext(ctx, `
+		UPDATE users SET
+			username = $2, email = $3, password_hash = $4, password_salt = $5,
+			role = $6, avatar = $7, created_at = $8
+		WHERE id = $1`,
+		user.ID, user.Username, user.Email, user.Password.Hash, user.Password.Salt,
+		user.Role, user.Avatar, user.CreatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrEmailIsTaken
+		}
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrUserNotFoundByID
+	}
+	return nil
+}
+
+// GetUsers returns every user, ordered by id
 func (p *Postgres) GetUsers(ctx context.Context) ([]domain.User, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -44,85 +91,27 @@ func (p *Postgres) GetUsers(ctx context.Context) ([]domain.User, error) {
 	return users, rows.Err()
 }
 
+// GetUserByID returns a user with the given id, or error if wasn't found
 func (p *Postgres) GetUserByID(ctx context.Context, id int) (domain.User, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.User{}, err
 	}
 
 	user, err := scanUser(p.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id))
-	return user, withNotFound(err, errUserNotFound)
+	return user, withNotFound(err, ErrUserNotFoundByID)
 }
 
+// GetUserByEmail returns a user with the given email, or error if wasn't found
 func (p *Postgres) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.User{}, err
 	}
 
 	user, err := scanUser(p.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = $1`, email))
-	return user, withNotFound(err, repos.ErrUserNotFoundByEmail)
+	return user, withNotFound(err, ErrUserNotFoundByEmail)
 }
 
-func (p *Postgres) CreateUser(ctx context.Context, username, email string, creds domain.PasswordCredentials, role string) (domain.User, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.User{}, err
-	}
-
-	user := domain.User{
-		Username:  username,
-		Email:     email,
-		Password:  creds,
-		Role:      role,
-		Avatar:    "",
-		CreatedAt: time.Now(),
-	}
-
-	err := p.db.QueryRowContext(ctx, `
-		INSERT INTO users (
-			username, email, password_hash, password_salt, role, avatar, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id`,
-		user.Username, user.Email, user.Password.Hash, user.Password.Salt,
-		user.Role, user.Avatar, user.CreatedAt,
-	).Scan(&user.ID)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return domain.User{}, repos.ErrEmailIsTaken
-		}
-		return domain.User{}, err
-	}
-
-	return user, nil
-}
-
-func (p *Postgres) ReplaceUser(ctx context.Context, user domain.User) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	result, err := p.db.ExecContext(ctx, `
-		UPDATE users SET
-			username = $2, email = $3, password_hash = $4, password_salt = $5,
-			role = $6, avatar = $7, created_at = $8
-		WHERE id = $1`,
-		user.ID, user.Username, user.Email, user.Password.Hash, user.Password.Salt,
-		user.Role, user.Avatar, user.CreatedAt,
-	)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return repos.ErrEmailIsTaken
-		}
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return errUserNotFound
-	}
-	return nil
-}
-
+// DeleteUserByID deletes user with the specified id
 func (p *Postgres) DeleteUserByID(ctx context.Context, id int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -137,7 +126,7 @@ func (p *Postgres) DeleteUserByID(ctx context.Context, id int) error {
 		return err
 	}
 	if affected == 0 {
-		return errUserNotFound
+		return ErrUserNotFoundByID
 	}
 	return nil
 }

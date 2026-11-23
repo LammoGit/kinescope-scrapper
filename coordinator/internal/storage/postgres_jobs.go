@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"coordinator/internal/domain"
-	"coordinator/internal/repos"
 )
 
 const jobColumns = `
@@ -86,183 +85,44 @@ func scanRange(s rowScanner) (domain.Range, error) {
 	return r, nil
 }
 
-// CreateJob creates a job and returns it, when both name and config.Name are empty the job is named job-<id>, matching the in-memory storage
-func (p *Postgres) CreateJob(ctx context.Context, name string, config domain.JobConfig) (domain.Job, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.Job{}, err
-	}
-
-	if name == "" {
-		name = config.Name
-	}
-	servers, err := jsonBytes(config.Servers)
-	if err != nil {
-		return domain.Job{}, err
-	}
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Job{}, err
-	}
-	defer tx.Rollback()
-
-	var id int
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO jobs (
-			name, range_from, range_to, request_timeout, max_tries,
-			global_rate_limit_rps, stop_on_consecutive_missing, status,
-			paused, workers, servers
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, '[]'::jsonb, $9)
-		RETURNING id`,
-		name, config.Range.From, config.Range.To, config.RequestTimeout,
-		config.MaxTries, config.GlobalRateLimitRPS, config.StopOnConsecutiveMissing,
-		domain.JobStatusCreated, servers,
-	).Scan(&id)
-	if err != nil {
-		return domain.Job{}, err
-	}
-
-	if name == "" {
-		name = fmt.Sprintf("job-%d", id)
-		if _, err := tx.ExecContext(ctx, `UPDATE jobs SET name = $1 WHERE id = $2`, name, id); err != nil {
-			return domain.Job{}, err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return domain.Job{}, err
-	}
-
-	config.Name = name
-	return domain.Job{
-		ID:      id,
-		Config:  config,
-		Workers: []int{},
-		Status:  domain.JobStatusCreated,
-	}, nil
-}
-
-// AssignJob adds a worker to the job without duplicating it
-func (p *Postgres) AssignJob(ctx context.Context, id int, worker domain.Worker) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	var raw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT workers FROM jobs WHERE id = $1 FOR UPDATE`, id).Scan(&raw); err != nil {
-		return withNotFound(err, errJobNotFound)
-	}
-
-	workers := []int{}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &workers); err != nil {
-			return fmt.Errorf("decode job workers: %w", err)
-		}
-	}
-	for _, current := range workers {
-		if current == worker.ID {
-			return tx.Commit()
-		}
-	}
-	workers = append(workers, worker.ID)
-
-	encoded, err := json.Marshal(workers)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET workers = $1, updated_at = now() WHERE id = $2`, encoded, id); err != nil {
-		return err
-	}
-
-	return tx.Commit()
-}
-
-func (p *Postgres) GetJob(ctx context.Context, id int) (domain.Job, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.Job{}, err
-	}
-
-	job, err := scanJob(p.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE id = $1`, id))
-	return job, withNotFound(err, errJobNotFound)
-}
-
-func (p *Postgres) GetJobs(ctx context.Context) ([]domain.Job, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	rows, err := p.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	jobs := []domain.Job{}
+func collectRanges(rows *sql.Rows) ([]domain.Range, error) {
+	ranges := []domain.Range{}
 	for rows.Next() {
-		job, err := scanJob(rows)
+		r, err := scanRange(rows)
 		if err != nil {
 			return nil, err
 		}
-		jobs = append(jobs, job)
+		ranges = append(ranges, r)
 	}
-	return jobs, rows.Err()
+	return ranges, rows.Err()
 }
 
-func (p *Postgres) DeleteJob(ctx context.Context, id int) (domain.Job, error) {
+func (p *Postgres) checkRangeConflict(ctx context.Context, jobID int, from, to int64) error {
+	var conflict bool
+	err := p.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM jobs
+			WHERE id <> $1
+			  AND ((range_from <= $2 AND $2 <= range_to)
+			       OR (range_from <= $3 AND $3 <= range_to))
+		)
+	`, jobID, from, to).Scan(&conflict)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return domain.ErrRangeIsTaken
+	}
+	return nil
+}
+
+// SaveJob adds new job if id is 0 and updates otherwise.
+func (p *Postgres) SaveJob(ctx context.Context, job *domain.Job) error {
 	if err := ctx.Err(); err != nil {
-		return domain.Job{}, err
+		return err
 	}
 
-	job, err := scanJob(p.db.QueryRowContext(ctx, `DELETE FROM jobs WHERE id = $1 RETURNING `+jobColumns, id))
-	return job, withNotFound(err, errJobNotFound)
-}
-
-func (p *Postgres) setJobState(ctx context.Context, id int, status string, paused bool, deassign bool) (domain.Job, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.Job{}, err
-	}
-
-	query := `
-		UPDATE jobs
-		SET status = $2, paused = $3, updated_at = now()
-		WHERE id = $1
-		RETURNING ` + jobColumns
-	if deassign {
-		query = `
-			UPDATE jobs
-			SET status = $2, paused = $3, workers = '[]'::jsonb, updated_at = now()
-			WHERE id = $1
-			RETURNING ` + jobColumns
-	}
-
-	job, err := scanJob(p.db.QueryRowContext(ctx, query, id, status, paused))
-	return job, withNotFound(err, errJobNotFound)
-}
-
-func (p *Postgres) StartJob(ctx context.Context, id int) (domain.Job, error) {
-	return p.setJobState(ctx, id, domain.JobStatusRunning, false, false)
-}
-
-func (p *Postgres) PauseJob(ctx context.Context, id int) (domain.Job, error) {
-	return p.setJobState(ctx, id, domain.JobStatusPaused, true, false)
-}
-
-func (p *Postgres) ResumeJob(ctx context.Context, id int) (domain.Job, error) {
-	return p.setJobState(ctx, id, domain.JobStatusRunning, false, false)
-}
-
-func (p *Postgres) StopJob(ctx context.Context, id int) (domain.Job, error) {
-	return p.setJobState(ctx, id, domain.JobStatusStopped, true, true)
-}
-
-func (p *Postgres) ReplaceJob(ctx context.Context, job domain.Job) error {
-	if err := ctx.Err(); err != nil {
+	if err := p.checkRangeConflict(ctx, job.ID, int64(job.Config.Range.From), int64(job.Config.Range.To)); err != nil {
 		return err
 	}
 
@@ -275,6 +135,33 @@ func (p *Postgres) ReplaceJob(ctx context.Context, job domain.Job) error {
 		return err
 	}
 
+	if job.ID == 0 {
+		var id int
+		err := p.db.QueryRowContext(ctx, `
+			INSERT INTO jobs (
+				name, range_from, range_to, request_timeout, max_tries,
+				global_rate_limit_rps, stop_on_consecutive_missing, status,
+				paused, expiration, workers, servers
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			RETURNING id`,
+			job.Config.Name, job.Config.Range.From, job.Config.Range.To,
+			job.Config.RequestTimeout, job.Config.MaxTries, job.Config.GlobalRateLimitRPS,
+			job.Config.StopOnConsecutiveMissing, job.Status, job.Paused,
+			nullableTime(job.Expiration), workers, servers,
+		).Scan(&id)
+		if err != nil {
+			return err
+		}
+		job.ID = id
+		if job.Config.Name == "" {
+			job.Config.Name = fmt.Sprintf("job-%d", id)
+			if _, err := p.db.ExecContext(ctx, `UPDATE jobs SET name = $1 WHERE id = $2`, job.Config.Name, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	result, err := p.db.ExecContext(ctx, `
 		UPDATE jobs SET
 			name = $2, range_from = $3, range_to = $4, request_timeout = $5,
@@ -285,7 +172,7 @@ func (p *Postgres) ReplaceJob(ctx context.Context, job domain.Job) error {
 		job.ID, job.Config.Name, job.Config.Range.From, job.Config.Range.To,
 		job.Config.RequestTimeout, job.Config.MaxTries, job.Config.GlobalRateLimitRPS,
 		job.Config.StopOnConsecutiveMissing, job.Status, job.Paused,
-		job.Expiration, workers, servers,
+		nullableTime(job.Expiration), workers, servers,
 	)
 	if err != nil {
 		return err
@@ -295,82 +182,193 @@ func (p *Postgres) ReplaceJob(ctx context.Context, job domain.Job) error {
 		return err
 	}
 	if affected == 0 {
-		return errJobNotFound
+		return ErrJobNotFoundByID
 	}
 	return nil
 }
 
-func (p *Postgres) AddRange(ctx context.Context, rangeBlock domain.Range) error {
+// GetJobByID returns a job by its identifier.
+func (p *Postgres) GetJobByID(ctx context.Context, id int) (domain.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.Job{}, err
+	}
+
+	job, err := scanJob(p.db.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE id = $1`, id))
+	if err != nil {
+		return domain.Job{}, withNotFound(err, ErrJobNotFoundByID)
+	}
+
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT `+rangeColumns+` FROM ranges WHERE job_id = $1 ORDER BY range_start, id`,
+		id,
+	)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	defer rows.Close()
+
+	ranges, err := collectRanges(rows)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	job.Ranges = ranges
+	return job, nil
+}
+
+// GetJobs returns every stored job ordered by identifier
+func (p *Postgres) GetJobs(ctx context.Context) ([]domain.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	jobRows, err := p.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer jobRows.Close()
+
+	jobs := []domain.Job{}
+	for jobRows.Next() {
+		job, err := scanJob(jobRows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	if err := jobRows.Err(); err != nil {
+		return nil, err
+	}
+
+	rangeRows, err := p.db.QueryContext(ctx, `SELECT `+rangeColumns+` FROM ranges ORDER BY job_id, range_start, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rangeRows.Close()
+
+	rangesByJob := make(map[int][]domain.Range)
+	for rangeRows.Next() {
+		r, err := scanRange(rangeRows)
+		if err != nil {
+			return nil, err
+		}
+		rangesByJob[r.JobID] = append(rangesByJob[r.JobID], r)
+	}
+	if err := rangeRows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range jobs {
+		jobs[i].Ranges = rangesByJob[jobs[i].ID]
+	}
+	return jobs, nil
+}
+
+// DeleteJobByID removes a job
+func (p *Postgres) DeleteJobByID(ctx context.Context, id int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	now := time.Now()
-	if rangeBlock.CreatedAt.IsZero() {
-		rangeBlock.CreatedAt = now
+	if _, err := p.db.ExecContext(ctx, `DELETE FROM ranges WHERE job_id = $1`, id); err != nil {
+		return err
 	}
-	if rangeBlock.NextID == 0 {
-		rangeBlock.NextID = rangeBlock.RangeStart
-	}
-	if rangeBlock.Status == "" {
-		rangeBlock.Status = domain.JobStatusCreated
-	}
-	rangeBlock.UpdatedAt = now
 
-	tx, err := p.db.BeginTx(ctx, nil)
+	result, err := p.db.ExecContext(ctx, `DELETE FROM jobs WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrJobNotFoundByID
+	}
+	return nil
+}
+
+// SaveRange adds new range if id is 0 and updates otherwise
+func (p *Postgres) SaveRange(ctx context.Context, rangeBlock *domain.Range) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	var exists bool
+	if err := p.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM jobs WHERE id = $1)`, rangeBlock.JobID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrJobNotFoundByID
+	}
 
 	if rangeBlock.ID == 0 {
-		_, err = tx.ExecContext(ctx, `
+		now := time.Now()
+		if rangeBlock.CreatedAt.IsZero() {
+			rangeBlock.CreatedAt = now
+		}
+		if rangeBlock.NextID == 0 {
+			rangeBlock.NextID = rangeBlock.RangeStart
+		}
+		if rangeBlock.Status == "" {
+			rangeBlock.Status = domain.JobStatusCreated
+		}
+		rangeBlock.UpdatedAt = now
+		rangeBlock.LeasedBy = 0
+
+		var id int
+		err := p.db.QueryRowContext(ctx, `
 			INSERT INTO ranges (
 				job_id, range_start, range_end, next_id, status, leased_by,
 				lease_expires_at, attempt, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			RETURNING id`,
 			rangeBlock.JobID, rangeBlock.RangeStart, rangeBlock.RangeEnd,
 			rangeBlock.NextID, rangeBlock.Status, rangeBlock.LeasedBy,
 			nullableTime(rangeBlock.LeaseExpiresAt), rangeBlock.Attempt,
 			rangeBlock.CreatedAt, rangeBlock.UpdatedAt,
-		)
-	} else {
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO ranges (
-				id, job_id, range_start, range_end, next_id, status, leased_by,
-				lease_expires_at, attempt, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			ON CONFLICT (id) DO UPDATE SET
-				job_id = EXCLUDED.job_id, range_start = EXCLUDED.range_start,
-				range_end = EXCLUDED.range_end, next_id = EXCLUDED.next_id,
-				status = EXCLUDED.status, leased_by = EXCLUDED.leased_by,
-				lease_expires_at = EXCLUDED.lease_expires_at, attempt = EXCLUDED.attempt,
-				created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at`,
-			rangeBlock.ID, rangeBlock.JobID, rangeBlock.RangeStart, rangeBlock.RangeEnd,
-			rangeBlock.NextID, rangeBlock.Status, rangeBlock.LeasedBy,
-			nullableTime(rangeBlock.LeaseExpiresAt), rangeBlock.Attempt,
-			rangeBlock.CreatedAt, rangeBlock.UpdatedAt,
-		)
-		if err == nil {
-			err = syncSequence(ctx, tx, "ranges")
+		).Scan(&id)
+		if err != nil {
+			return err
 		}
+		rangeBlock.ID = id
+		return nil
 	}
+
+	result, err := p.db.ExecContext(ctx, `
+		UPDATE ranges SET
+			job_id = $2, range_start = $3, range_end = $4, next_id = $5,
+			status = $6, leased_by = $7, lease_expires_at = $8, attempt = $9,
+			created_at = $10, updated_at = $11
+		WHERE id = $1`,
+		rangeBlock.ID, rangeBlock.JobID, rangeBlock.RangeStart, rangeBlock.RangeEnd,
+		rangeBlock.NextID, rangeBlock.Status, rangeBlock.LeasedBy,
+		nullableTime(rangeBlock.LeaseExpiresAt), rangeBlock.Attempt,
+		rangeBlock.CreatedAt, rangeBlock.UpdatedAt,
+	)
 	if err != nil {
 		return err
 	}
-
-	return tx.Commit()
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrRangeNotFoundByID
+	}
+	return nil
 }
 
+// GetRangeByID returns a copy of a range by its identifier
 func (p *Postgres) GetRangeByID(ctx context.Context, id int) (domain.Range, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Range{}, err
 	}
 
 	r, err := scanRange(p.db.QueryRowContext(ctx, `SELECT `+rangeColumns+` FROM ranges WHERE id = $1`, id))
-	return r, withNotFound(err, errRangeNotFound)
+	return r, withNotFound(err, ErrRangeNotFoundByID)
 }
 
+// GetRangesByJobID returns all ranges belonging to a job ordered by start
 func (p *Postgres) GetRangesByJobID(ctx context.Context, jobID int) ([]domain.Range, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -388,17 +386,15 @@ func (p *Postgres) GetRangesByJobID(ctx context.Context, jobID int) ([]domain.Ra
 	return collectRanges(rows)
 }
 
-func (p *Postgres) GetUnassignedRanges(ctx context.Context) ([]domain.Range, error) {
+// GetRangesByWorkerID
+func (p *Postgres) GetRangesByWorkerID(ctx context.Context, workerID int) ([]domain.Range, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT `+rangeColumns+`
-		FROM ranges
-		WHERE status NOT IN ('completed', 'stopped', 'failed')
-		  AND (leased_by = 0 OR lease_expires_at IS NULL OR lease_expires_at <= now())
-		ORDER BY job_id, range_start, id`,
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT `+rangeColumns+` FROM ranges WHERE leased_by = $1 ORDER BY job_id, range_start, id`,
+		workerID,
 	)
 	if err != nil {
 		return nil, err
@@ -408,209 +404,23 @@ func (p *Postgres) GetUnassignedRanges(ctx context.Context) ([]domain.Range, err
 	return collectRanges(rows)
 }
 
-func collectRanges(rows *sql.Rows) ([]domain.Range, error) {
-	ranges := []domain.Range{}
-	for rows.Next() {
-		r, err := scanRange(rows)
-		if err != nil {
-			return nil, err
-		}
-		ranges = append(ranges, r)
-	}
-	return ranges, rows.Err()
-}
-
-// TryClaimRange atomically leases an unassigned or expired range
-func (p *Postgres) TryClaimRange(ctx context.Context, workerID, jobID int, leaseTTL time.Duration) (domain.Range, error) {
+// RenewLeases renews all ranges leased by a worker
+func (p *Postgres) RenewLeases(ctx context.Context, workerID int, ttl time.Duration) error {
 	if err := ctx.Err(); err != nil {
-		return domain.Range{}, err
+		return err
 	}
 
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Range{}, err
-	}
-	defer tx.Rollback()
-
-	var (
-		jobStatus          string
-		rangeFrom, rangeTo int64
-	)
-	// Block size carved from unclaimed gaps
-	const maxSize int64 = 1000
-	err = tx.QueryRowContext(ctx, `
-		SELECT status, range_from, range_to
-		FROM jobs
-		WHERE id = $1
-		FOR NO KEY UPDATE
-	`, jobID).Scan(&jobStatus, &rangeFrom, &rangeTo)
-	if err == sql.ErrNoRows {
-		return domain.Range{}, repos.ErrJobNotFoundByID
-	}
-	if err != nil {
-		return domain.Range{}, err
-	}
-	if jobStatus == domain.JobStatusCompleted {
-		return domain.Range{}, repos.ErrJobIsCompleted
-	}
-
-	var claimed domain.Range
-	err = tx.QueryRowContext(ctx, `
-		UPDATE ranges
-		SET leased_by = $2,
-		    lease_expires_at = now() + make_interval(secs => $3),
-		    status = 'running',
-		    updated_at = now()
-		WHERE id = (
-			SELECT id
-			FROM ranges
-			WHERE job_id = $1
-			  AND status <> 'completed'
-			  AND next_id <= range_end
-			  AND (lease_expires_at IS NULL OR lease_expires_at <= now())
-			ORDER BY range_start, id
-			LIMIT 1
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING id, job_id, range_start, range_end, next_id, status,
-		          leased_by, lease_expires_at, created_at, updated_at
-	`, jobID, workerID, leaseTTL.Seconds()).Scan(
-		&claimed.ID, &claimed.JobID, &claimed.RangeStart, &claimed.RangeEnd,
-		&claimed.NextID, &claimed.Status, &claimed.LeasedBy, &claimed.LeaseExpiresAt,
-		&claimed.CreatedAt, &claimed.UpdatedAt,
-	)
-	if err == nil {
-		if err := tx.Commit(); err != nil {
-			return domain.Range{}, err
-		}
-		return claimed, nil
-	}
-	if err != sql.ErrNoRows {
-		return domain.Range{}, err
-	}
-
-	var gapStart, gapEnd int64
-	err = tx.QueryRowContext(ctx, `
-		WITH ordered AS (
-			SELECT range_start, range_end,
-			       LAG(range_end) OVER (ORDER BY range_start, id) AS prev_end
-			FROM ranges
-			WHERE job_id = $1
-		),
-		gaps AS (
-			SELECT
-				GREATEST(COALESCE(prev_end + 1, $2::bigint), $2::bigint) AS gap_start,
-				range_start - 1                                          AS gap_end
-			FROM ordered
-			WHERE range_start > GREATEST(COALESCE(prev_end + 1, $2::bigint), $2::bigint)
-
-			UNION ALL
-
-			SELECT
-				GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) AS gap_start,
-				CASE
-					WHEN $3::bigint > 0 THEN $3::bigint
-					ELSE GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) + $4::bigint - 1
-				END AS gap_end
-			FROM ranges
-			WHERE job_id = $1
-			HAVING CASE
-				WHEN $3::bigint > 0 THEN GREATEST(COALESCE(MAX(range_end) + 1, $2::bigint), $2::bigint) <= $3::bigint
-				ELSE TRUE
-			END
-		)
-		SELECT gap_start, gap_end
-		FROM gaps
-		ORDER BY gap_start
-		LIMIT 1
-	`, jobID, rangeFrom, rangeTo, int64(maxSize)).Scan(&gapStart, &gapEnd)
-	if err == sql.ErrNoRows {
-		return domain.Range{}, repos.ErrRangeIsTaken
-	}
-	if err != nil {
-		return domain.Range{}, err
-	}
-
-	gapSize := gapEnd - gapStart + 1
-	var size int64
-	switch {
-	case gapSize <= maxSize:
-		size = gapSize
-	case gapSize < 2*maxSize:
-		size = gapSize / 2
-	default:
-		size = maxSize
-	}
-	end := gapStart + size - 1
-
-	var carved domain.Range
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO ranges (job_id, range_start, range_end, next_id, status,
-		                    leased_by, lease_expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $2, 'running', $4,
-		        now() + make_interval(secs => $5), now(), now())
-		RETURNING id, job_id, range_start, range_end, next_id, status,
-		          leased_by, lease_expires_at, created_at, updated_at
-	`, jobID, gapStart, end, workerID, leaseTTL.Seconds()).Scan(
-		&carved.ID, &carved.JobID, &carved.RangeStart, &carved.RangeEnd,
-		&carved.NextID, &carved.Status, &carved.LeasedBy, &carved.LeaseExpiresAt,
-		&carved.CreatedAt, &carved.UpdatedAt,
-	)
-	if err != nil {
-		return domain.Range{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.Range{}, err
-	}
-	return carved, nil
-}
-
-func (p *Postgres) RenewLeases(ctx context.Context, workerID int, leaseTTL time.Duration) (int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-
-	result, err := p.db.ExecContext(ctx, `
+	_, err := p.db.ExecContext(ctx, `
 		UPDATE ranges
 		SET lease_expires_at = now() + make_interval(secs => $2), updated_at = now()
-		WHERE leased_by = $1 AND status = 'running'`,
-		workerID, leaseTTL.Seconds(),
+		WHERE leased_by = $1 AND status = 'running' AND lease_expires_at > now()`,
+		workerID, ttl.Seconds(),
 	)
-	if err != nil {
-		return 0, err
-	}
-	affected, err := result.RowsAffected()
-	return int(affected), err
+	return err
 }
 
-func (p *Postgres) ReleaseRangeByID(ctx context.Context, rangeID int) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	result, err := p.db.ExecContext(ctx, `
-		UPDATE ranges
-		SET leased_by = 0,
-		    lease_expires_at = NULL,
-		    status = CASE WHEN next_id > range_end THEN 'completed' ELSE 'created' END,
-		    updated_at = now()
-		WHERE id = $1`,
-		rangeID,
-	)
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return errRangeNotFound
-	}
-	return nil
-}
-
-func (p *Postgres) ReleaseRangesByJobID(ctx context.Context, jobID int) error {
+// DeleteRangesByJobID removes every range of a job
+func (p *Postgres) DeleteRangesByJobID(ctx context.Context, jobID int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -620,48 +430,7 @@ func (p *Postgres) ReleaseRangesByJobID(ctx context.Context, jobID int) error {
 		return err
 	}
 	if !exists {
-		return errJobNotFound
-	}
-
-	_, err := p.db.ExecContext(ctx, `
-		UPDATE ranges
-		SET leased_by = 0,
-		    lease_expires_at = NULL,
-		    status = CASE WHEN next_id > range_end THEN 'completed' ELSE 'created' END,
-		    updated_at = now()
-		WHERE job_id = $1`,
-		jobID,
-	)
-	return err
-}
-
-func (p *Postgres) CompleteRange(ctx context.Context, rangeID int) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	result, err := p.db.ExecContext(ctx, `
-		UPDATE ranges
-		SET leased_by = 0, lease_expires_at = NULL, status = 'completed', updated_at = now()
-		WHERE id = $1`,
-		rangeID,
-	)
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return errRangeNotFound
-	}
-	return nil
-}
-
-func (p *Postgres) DeleteRangesByJobID(ctx context.Context, jobID int) error {
-	if err := ctx.Err(); err != nil {
-		return err
+		return ErrJobNotFoundByID
 	}
 
 	_, err := p.db.ExecContext(ctx, `DELETE FROM ranges WHERE job_id = $1`, jobID)

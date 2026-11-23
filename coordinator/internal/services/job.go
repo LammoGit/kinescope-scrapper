@@ -8,6 +8,7 @@ import (
 	"coordinator/pkg/sse"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -48,8 +49,9 @@ func NewJobService(ctx context.Context, hub *sse.Hub, storage st.Storage) (*JobS
 }
 
 // CreateJob creates a job together with the ranges it processes
-func (s *JobService) CreateJob(ctx context.Context, name string, config domain.JobConfig) (domain.Job, error) {
-	job, err := s.storage.CreateJob(ctx, name, config)
+func (s *JobService) CreateJob(ctx context.Context, config domain.JobConfig) (domain.Job, error) {
+	job := domain.Job{Config: config}
+	err := s.storage.SaveJob(ctx, &job)
 	result := "success"
 	code := 200
 	msg := "job is created successfully"
@@ -72,12 +74,12 @@ func (s *JobService) GetJobs(ctx context.Context) ([]domain.Job, error) {
 
 // GetJobByID returns a job with the given id
 func (s *JobService) GetJobByID(ctx context.Context, id int) (domain.Job, error) {
-	return s.storage.GetJob(ctx, id)
+	return s.storage.GetJobByID(ctx, id)
 }
 
 // ReplaceJobByID replaces previous job with new one
 func (s *JobService) ReplaceJobByID(ctx context.Context, job domain.Job) error {
-	err := s.storage.ReplaceJob(ctx, job)
+	err := s.storage.SaveJob(ctx, &job)
 	result := "success"
 	code := 200
 	msg := "job is updated successfully"
@@ -95,7 +97,12 @@ func (s *JobService) ReplaceJobByID(ctx context.Context, job domain.Job) error {
 
 // DeleteJob removes a job and its ranges
 func (s *JobService) DeleteJob(ctx context.Context, id int) error {
-	job, err := s.storage.DeleteJob(ctx, id)
+	job, err := s.storage.GetJobByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	err = s.storage.DeleteJobByID(ctx, id)
 	result := "success"
 	code := 200
 	msg := "job is deleted successfully"
@@ -125,35 +132,47 @@ func (s *JobService) DeleteJob(ctx context.Context, id int) error {
 
 // StartJob moves a job into the running state
 func (s *JobService) StartJob(ctx context.Context, id int) error {
-	return s.changeState(ctx, id, "start", "job is started successfully", domain.JobStatusRunning, s.storage.StartJob)
+	return s.changeState(ctx, id, "start", "job is started successfully")
 }
 
 // PauseJob moves a job into the paused state
 func (s *JobService) PauseJob(ctx context.Context, id int) error {
-	return s.changeState(ctx, id, "pause", "job is paused successfully", domain.JobStatusPaused, s.storage.PauseJob)
+	return s.changeState(ctx, id, "pause", "job is paused successfully")
 }
 
 // ResumeJob moves a paused job back into the running state
 func (s *JobService) ResumeJob(ctx context.Context, id int) error {
-	return s.changeState(ctx, id, "resume", "job is resumed successfully", domain.JobStatusRunning, s.storage.ResumeJob)
+	return s.changeState(ctx, id, "resume", "job is resumed successfully")
 }
 
 // StopJob moves a job into the stopped state and releases its ranges
 func (s *JobService) StopJob(ctx context.Context, id int) error {
-	// publish to workers that they are deassigned from the job
-	err := s.changeState(ctx, id, "stop", "job is stopped successfully", domain.JobStatusStopped, s.storage.StopJob)
-	if err != nil {
-		return err
-	}
-	s.storage.ReleaseRangesByJobID(ctx, id)
-	return nil
+	return s.changeState(ctx, id, "stop", "job is stopped successfully")
 }
 
 // changeState changes state of a job, records event, and publishes state change message to the hub
-func (s *JobService) changeState(ctx context.Context, id int, operation, message, state string, change func(context.Context, int) (domain.Job, error)) error {
-	job, err := change(ctx, id)
+func (s *JobService) changeState(ctx context.Context, id int, operation, message string) error {
+	job, err := s.storage.GetJobByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	workers := slices.Clone(job.Workers)
+
+	switch operation {
+	case "start":
+		job.Start()
+	case "pause":
+		job.Pause()
+	case "resume":
+		job.Resume()
+	case "stop":
+		job.Stop()
+	}
+
+	err = s.storage.SaveJob(ctx, &job)
 	if err == nil {
-		slog.Info("Job state changed", "jobID", id, "operation", operation, "state", state)
+		slog.Info("Job state changed", "jobID", id, "operation", operation, "state", job.Status)
 	}
 
 	// Log state change event
@@ -165,7 +184,11 @@ func (s *JobService) changeState(ctx context.Context, id int, operation, message
 		code = utility.StatusFromError(err)
 		msg = err.Error()
 	}
-	s.record(ctx, id, operation, result, code, msg)
+	s.record(ctx, id, job.Status, result, code, msg)
+
+	if err != nil {
+		return err
+	}
 
 	// Send job state update message
 	if s.hub == nil {
@@ -176,12 +199,12 @@ func (s *JobService) changeState(ctx context.Context, id int, operation, message
 	topics = append(topics, "job-*", "worker-*")
 	topics = append(topics, fmt.Sprintf("job-%d", id))
 	topics = append(topics, fmt.Sprintf("job-update-%d", id), "job-update-*")
-	for _, id := range job.Workers {
-		topics = append(topics, fmt.Sprintf("worker-%d", id))
+	for _, workerID := range workers {
+		topics = append(topics, fmt.Sprintf("worker-%d", workerID))
 	}
 	s.hub.PublishAll(topics, sse.SSEMessage{Event: "job.state_change", Data: map[string]any{
 		"job_id": id,
-		"state":  state,
+		"state":  job.Status,
 	}})
 
 	return nil
@@ -202,7 +225,7 @@ func (s *JobService) publish(event string, job domain.Job) {
 }
 
 // record logs job event and publishes message to the hub
-func (s *JobService) record(ctx context.Context, id int, operation string, result string, code int, message string) {
+func (s *JobService) record(ctx context.Context, id int, operation string, result string, code int, message string) error {
 	event := domain.Event{
 		Time:       time.Now(),
 		Level:      domain.EventLevelInfo,
@@ -216,13 +239,19 @@ func (s *JobService) record(ctx context.Context, id int, operation string, resul
 		ErrorCode:  code,
 		Message:    message,
 	}
-	stored := s.storage.AddEvent(ctx, event)
+
+	err := s.storage.AddEvent(ctx, event)
+	if err != nil {
+		return err
+	}
+
 	if s.hub != nil {
 		s.hub.PublishAll(
 			[]string{"events-*", fmt.Sprintf("events-job-%d", id)},
-			sse.SSEMessage{Event: "event", Data: stored},
+			sse.SSEMessage{Event: "event", Data: event},
 		)
 	}
+	return nil
 }
 
 // run waits for scheduling requests and assigns available ranges
@@ -265,23 +294,19 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 
 	type candidate struct {
 		id       int
+		idx      int
 		finishIn time.Duration
 	}
 	candidates := make([]candidate, 0, len(jobs))
-	for _, job := range jobs {
+	for idx, job := range jobs {
 		if job.Status != domain.JobStatusRunning || job.Paused {
-			continue
-		}
-
-		ranges, err := s.storage.GetRangesByJobID(ctx, job.ID)
-		if err != nil {
 			continue
 		}
 
 		remaining := 0
 		frontier := job.Config.Range.From - 1
 		open := job.Config.Range.To <= 0
-		for _, r := range ranges {
+		for _, r := range job.Ranges {
 			if r.RangeEnd > frontier {
 				frontier = r.RangeEnd
 			}
@@ -312,7 +337,7 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 		} else {
 			ttf = time.Duration(1<<62 - 1)
 		}
-		candidates = append(candidates, candidate{job.ID, ttf})
+		candidates = append(candidates, candidate{job.ID, idx, ttf})
 	}
 	if len(candidates) == 0 {
 		return
@@ -348,26 +373,35 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 			}
 		}
 
-		var claimed domain.Range
-		var got bool
 		for _, c := range candidates {
-			r, err := s.storage.TryClaimRange(ctx, workerID, c.id, s.leaseTime)
+			draft := jobs[c.idx].Clone()
+			claimed, err := draft.ClaimNextRange(workerID, s.leaseTime)
 			if err != nil {
 				continue
 			}
-			claimed = r
-			got = true
-			break
-		}
-		if !got {
-			continue
-		}
 
-		select {
-		case ch <- claimed:
-			delete(s.leasers, workerID)
-		default:
-			_ = s.storage.ReleaseRangeByID(ctx, claimed.ID)
+			if err := s.storage.SaveJob(ctx, &draft); err != nil {
+				continue
+			}
+
+			var savedRange *domain.Range
+			for i := range draft.Ranges {
+				if draft.Ranges[i].RangeStart == claimed.RangeStart && draft.Ranges[i].RangeEnd == claimed.RangeEnd {
+					savedRange = &draft.Ranges[i]
+					break
+				}
+			}
+
+			select {
+			case ch <- *savedRange:
+				jobs[c.idx] = draft
+				delete(s.leasers, workerID)
+			default:
+				savedRange.Release()
+				_ = s.storage.SaveJob(ctx, &draft)
+				jobs[c.idx] = draft
+			}
+			break
 		}
 	}
 
@@ -378,19 +412,11 @@ func (s *JobService) assignAvailableRanges(ctx context.Context) {
 
 // ReceiveWorkerHeartbeat validates that the worker is still registered
 func (s *JobService) ReceiveWorkerHeartbeat(ctx context.Context, workerID int) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	s.storage.RenewLeases(ctx, workerID, s.leaseTime)
-	return nil
+	return s.storage.RenewLeases(ctx, workerID, s.leaseTime)
 }
 
 // Lease blocks until a range is assigned to the worker or the context ends
 func (s *JobService) Lease(ctx context.Context, workerID int) (domain.Range, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.Range{}, err
-	}
-
 	s.mu.Lock()
 	var ch chan domain.Range
 	if chl, ok := s.leasers[workerID]; ok {
@@ -421,10 +447,6 @@ func (s *JobService) Lease(ctx context.Context, workerID int) (domain.Range, err
 
 // WorkerCompleted marks a range as fully processed by its worker
 func (s *JobService) WorkerCompleted(ctx context.Context, workerID, rangeID int) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
 	r, err := s.storage.GetRangeByID(ctx, rangeID)
 	if err != nil {
 		return err
@@ -433,7 +455,9 @@ func (s *JobService) WorkerCompleted(ctx context.Context, workerID, rangeID int)
 		return utility.NewForbiddenError("range is leased by another worker")
 	}
 
-	if err := s.storage.CompleteRange(ctx, rangeID); err != nil {
+	r.Complete()
+
+	if err := s.storage.SaveRange(ctx, &r); err != nil {
 		return err
 	}
 
@@ -443,10 +467,6 @@ func (s *JobService) WorkerCompleted(ctx context.Context, workerID, rangeID int)
 
 // FailedLink records a warning event about a link the worker failed to process
 func (s *JobService) FailedLink(ctx context.Context, workerID int, url, msg string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
 	if _, err := s.storage.GetWorkerByID(ctx, workerID); err != nil {
 		return err
 	}

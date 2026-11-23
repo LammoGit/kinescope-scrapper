@@ -1,13 +1,17 @@
 package domain
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
-// Video is a downloaded video belonging to a job
-type Video struct {
-	ID              int                  `json:"id" form:"id" binding:"required,min=1"`
-	JobID           int                  `json:"job_id" form:"job_id" binding:"required,min=1"`
-	Metadata        VideoMetadata        `json:"metadata" form:"metadata" binding:"required"`
-	StorageMetadata VideoStorageMetadata `json:"storage_metadata" form:"storage_metadata" binding:"required"`
+// IVideoRepository stores downloaded videos
+type IVideoRepository interface {
+	AddVideo(ctx context.Context, video *Video) error
+	GetVideos(ctx context.Context, limit, offset int) ([]Video, error)
+	GetVideoByID(ctx context.Context, id int) (Video, error)
+	GetVideosByJobID(ctx context.Context, jobID int) ([]Video, error)
+	GetVideosByQuery(ctx context.Context, query string, limit, offset int) ([]Video, error)
 }
 
 // VideoMetadata contains the metadata of a downloaded video
@@ -24,9 +28,35 @@ type VideoMetadata struct {
 
 // VideoStorageMetadata holds information used for accessing video in storage
 type VideoStorageMetadata struct {
-	BucketName string `json:"bucket_name" form:"bucket_name"`
-	ObjectKey  string `json:"object_key" form:"object_key"`
+	BucketName string `json:"bucket_name" form:"bucket_name" binding:"required"`
+	ObjectKey  string `json:"object_key" form:"object_key" binding:"required"`
 	Checksum   string `json:"checksum" form:"checksum" binding:"required,sha256"`
-	ServerName string `json:"server_name" form:"server_name"`
-	LocalPath  string `json:"local_path" form:"local_path"`
+	ServerName string `json:"server_name" form:"server_name" binding:"required"`
+	LocalPath  string `json:"local_path" form:"local_path" binding:"required,path"`
+}
+
+// Video is a downloaded video belonging to a job
+type Video struct {
+	ID              int                  `json:"id" form:"id" binding:"required,min=1"`
+	JobID           int                  `json:"job_id" form:"job_id" binding:"required,min=1"`
+	Metadata        VideoMetadata        `json:"metadata" form:"metadata" binding:"required"`
+	StorageMetadata VideoStorageMetadata `json:"storage_metadata" form:"storage_metadata" binding:"required"`
+}
+
+// Clone creates a deep-copy of the calling VideoMetadata
+func (vm VideoMetadata) Clone() VideoMetadata {
+	return vm
+}
+
+// Clone creates a deep-copy of the calling VideoStorageMetadata
+func (vsm VideoStorageMetadata) Clone() VideoStorageMetadata {
+	return vsm
+}
+
+// Clone creates a deep-copy of the calling Video
+func (v Video) Clone() Video {
+	clone := v
+	clone.Metadata = v.Metadata.Clone()
+	clone.StorageMetadata = v.StorageMetadata.Clone()
+	return clone
 }

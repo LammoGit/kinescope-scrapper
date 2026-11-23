@@ -1,29 +1,16 @@
-package repos
+//go:build !postgres
+
+package storage
 
 import (
 	"context"
 	"coordinator/internal/domain"
-	"coordinator/internal/utility"
 	"strings"
 	"sync"
 )
 
 // Won't compile if *VideoRepository doesn't implement IVideoRepository
-var _ IVideoRepository = &VideoRepository{}
-
-// Errors
-var (
-	ErrVideoNotFoundByID = utility.NewNotFoundError("video with given id doesn't exist")
-)
-
-// IVideoRepository stores downloaded videos
-type IVideoRepository interface {
-	AddVideo(ctx context.Context, video domain.Video) error
-	GetVideos(ctx context.Context, limit, offset int) ([]domain.Video, error)
-	GetVideoByID(ctx context.Context, id int) (domain.Video, error)
-	GetVideosByJobID(ctx context.Context, jobID int) ([]domain.Video, error)
-	GetVideosByQuery(ctx context.Context, query string, limit, offset int) ([]domain.Video, error)
-}
+var _ domain.IVideoRepository = &VideoRepository{}
 
 // VideoRepository is an in-memory video store
 type VideoRepository struct {
@@ -40,8 +27,8 @@ func NewVideoRepository() *VideoRepository {
 	}
 }
 
-// AddVideo stores a video and returns it
-func (vr *VideoRepository) AddVideo(ctx context.Context, video domain.Video) error {
+// AddVideo stores a video
+func (vr *VideoRepository) AddVideo(ctx context.Context, video *domain.Video) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -49,9 +36,9 @@ func (vr *VideoRepository) AddVideo(ctx context.Context, video domain.Video) err
 	vr.mu.Lock()
 	defer vr.mu.Unlock()
 
-	vr.nextID++
 	video.ID = vr.nextID
-	vr.videos[vr.nextID] = video
+	vr.nextID++
+	vr.videos[video.ID] = video.Clone()
 	return nil
 }
 

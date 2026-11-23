@@ -1,28 +1,15 @@
-package repos
+//go:build !postgres
+
+package storage
 
 import (
 	"context"
 	"coordinator/internal/domain"
-	"coordinator/internal/utility"
 	"sync"
 )
 
 // Won't compile if *WorkerRepository doesn't implement IWorkerRepository
-var _ IWorkerRepository = &WorkerRepository{}
-
-// Errors
-var (
-	ErrWorkerNotFoundByID = utility.NewNotFoundError("worker with given id doesn't exist")
-)
-
-// IWorkerRepository stores registered workers
-type IWorkerRepository interface {
-	GetWorkerByID(ctx context.Context, workerID int) (domain.Worker, error)
-	GetWorkers(ctx context.Context) ([]domain.Worker, error)
-	AddWorker(ctx context.Context, worker domain.Worker) error
-	ReplaceWorker(ctx context.Context, worker domain.Worker) error
-	DeleteWorkerByID(ctx context.Context, workerID int) error
-}
+var _ domain.IWorkerRepository = &WorkerRepository{}
 
 // WorkerRepository is an in-memory worker store
 type WorkerRepository struct {
@@ -37,6 +24,37 @@ func NewWorkerRepository() *WorkerRepository {
 		workers: make(map[int]domain.Worker),
 		nextID:  1,
 	}
+}
+
+// SaveWorker adds new worker if id is 0 and updates otherwise.
+func (wr *WorkerRepository) SaveWorker(ctx context.Context, worker *domain.Worker) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	wr.mu.Lock()
+	defer wr.mu.Unlock()
+
+	// Insert
+	if worker.ID == 0 {
+		worker.ID = wr.nextID
+		wr.nextID++
+
+		if worker.Status == "" {
+			worker.Status = domain.WorkerStatusOff
+		}
+
+		wr.workers[worker.ID] = worker.Clone()
+		return nil
+	}
+
+	// Update
+	if _, ok := wr.workers[worker.ID]; !ok {
+		return ErrWorkerNotFoundByID
+	}
+	wr.workers[worker.ID] = worker.Clone()
+
+	return nil
 }
 
 // GetWorkerByID returns a copy of a worker by its identifier
@@ -74,44 +92,6 @@ func (wr *WorkerRepository) GetWorkers(ctx context.Context) ([]domain.Worker, er
 		res = append(res, wr.workers[id])
 	}
 	return res, nil
-}
-
-// AddWorker stores a worker, assigning it an identifier when needed
-func (wr *WorkerRepository) AddWorker(ctx context.Context, worker domain.Worker) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	wr.mu.Lock()
-	defer wr.mu.Unlock()
-
-	if worker.ID == 0 {
-		wr.nextID++
-		worker.ID = wr.nextID
-	} else if worker.ID > wr.nextID {
-		wr.nextID = worker.ID
-	}
-	if worker.Status == "" {
-		worker.Status = domain.WorkerStatusOff
-	}
-	wr.workers[worker.ID] = worker
-	return nil
-}
-
-// ReplaceWorker replaces a stored worker
-func (wr *WorkerRepository) ReplaceWorker(ctx context.Context, worker domain.Worker) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	wr.mu.Lock()
-	defer wr.mu.Unlock()
-
-	if _, ok := wr.workers[worker.ID]; !ok {
-		return ErrWorkerNotFoundByID
-	}
-	wr.workers[worker.ID] = worker
-	return nil
 }
 
 // DeleteWorkerByID removes a worker

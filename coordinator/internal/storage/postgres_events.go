@@ -50,15 +50,6 @@ func (p *Postgres) GetEvents(ctx context.Context) ([]domain.Event, error) {
 	return p.queryEvents(ctx, `SELECT `+eventColumns+` FROM events ORDER BY id`)
 }
 
-func (p *Postgres) GetEventByID(ctx context.Context, id int) (domain.Event, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.Event{}, err
-	}
-
-	event, err := scanEvent(p.db.QueryRowContext(ctx, `SELECT `+eventColumns+` FROM events WHERE id = $1`, id))
-	return event, withNotFound(err, errEventNotFound)
-}
-
 func (p *Postgres) GetEventsByJobID(ctx context.Context, jobID int) ([]domain.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

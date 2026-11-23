@@ -51,7 +51,7 @@ func (s *TelemetryService) GetJobMetricsByID(ctx context.Context, id int) (domai
 // AddWorkerMetricsByID stores a metrics for a worker and publishes it
 func (s *TelemetryService) AddWorkerMetricsByID(ctx context.Context, id int, metrics domain.Metrics) error {
 	metrics.WorkerID = id
-	if err := s.storage.AddMetrics(ctx, metrics); err != nil {
+	if err := s.storage.SaveMetrics(ctx, metrics); err != nil {
 		return err
 	}
 

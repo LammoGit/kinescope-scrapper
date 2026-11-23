@@ -104,7 +104,7 @@ func (s *VideoService) GetVideosByJobID(ctx context.Context, jobID int) ([]domai
 
 // AddVideo stores a video
 func (s *VideoService) AddVideo(ctx context.Context, video domain.Video) error {
-	return s.storage.AddVideo(ctx, video)
+	return s.storage.AddVideo(ctx, &video)
 }
 
 // Search returns videos matching the query

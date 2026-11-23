@@ -1,6 +1,7 @@
 package sse
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,7 @@ type Hub struct {
 	msgChannelSize   int                                      // Size of the message publication channel.
 	retryInterval    int                                      // Interval of retrying SSE connection in milliseconds.
 	keepaliveInteval time.Duration                            // Duration between keep-alive messages.
+	done             chan struct{}
 }
 
 // sub type representing a subscription to a topic.
@@ -52,6 +54,7 @@ func NewHub() *Hub {
 		msgChannelSize:   16,
 		retryInterval:    3000,
 		keepaliveInteval: 20 * time.Second,
+		done:             make(chan struct{}),
 	}
 	go h.run()
 	return h
@@ -75,12 +78,15 @@ func (h *Hub) run() {
 		case id := <-h.unreg:
 			// Worker is unregistered
 			slog.Debug("SSE subscriber unregistered", "subscriptionID", id)
+			var ch chan SSEMessage
 			for _, m := range h.subs {
-				ch, ok := m[id]
-				if ok {
+				if c, ok := m[id]; ok {
 					delete(m, id)
-					close(ch)
+					ch = c
 				}
+			}
+			if ch != nil {
+				close(ch)
 			}
 		case p := <-h.pub:
 			// Message is published
@@ -93,6 +99,8 @@ func (h *Hub) run() {
 						"topic", p.topic, "event", p.msg.Event)
 				}
 			}
+		case <-h.done:
+			return
 		}
 	}
 }
@@ -167,6 +175,11 @@ func (h *Hub) ServeSSE(c *gin.Context, topics []string, load func() ([]SSEMessag
 			flusher.Flush()
 		}
 	}
+}
+
+// Shutdown gracefully close the hub
+func (h *Hub) Shutdown(ctx context.Context) {
+	close(h.done)
 }
 
 // writeSSE writes SSEMesage to a http.ResponseWriter.

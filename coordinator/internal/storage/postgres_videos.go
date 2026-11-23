@@ -26,7 +26,7 @@ func scanVideo(s rowScanner) (domain.Video, error) {
 	return v, err
 }
 
-func (p *Postgres) AddVideo(ctx context.Context, video domain.Video) error {
+func (p *Postgres) AddVideo(ctx context.Context, video *domain.Video) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func (p *Postgres) GetVideoByID(ctx context.Context, id int) (domain.Video, erro
 	}
 
 	video, err := scanVideo(p.db.QueryRowContext(ctx, `SELECT `+videoColumns+` FROM videos WHERE id = $1`, id))
-	return video, withNotFound(err, errVideoNotFound)
+	return video, withNotFound(err, ErrVideoNotFoundByID)
 }
 
 func (p *Postgres) GetVideosByJobID(ctx context.Context, jobID int) ([]domain.Video, error) {

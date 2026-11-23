@@ -1,5 +1,18 @@
 package domain
 
+import (
+	"context"
+)
+
+// ITelemetryRepository stores and aggregates worker telemetry snapshots
+type ITelemetryRepository interface {
+	SaveMetrics(ctx context.Context, metrics Metrics) error
+	GetWorkersMetrics(ctx context.Context) ([]Metrics, error)
+	GetJobsMetrics(ctx context.Context) ([]Metrics, error)
+	GetWorkerMetricsByID(ctx context.Context, id int) (Metrics, error)
+	GetJobMetricsByID(ctx context.Context, id int) (Metrics, error)
+}
+
 // Metrics structure holding telemetry data sent by a worker
 type Metrics struct {
 	RangeID              int     `json:"range_id" form:"range_id" binding:"required,min=0"`                             // ID of the range metrics belong to
@@ -24,6 +37,11 @@ type Metrics struct {
 	RepeatedAttempts     int     `json:"repeated_attempts" form:"repeated_attempts" binding:"required,min=0"`           // Number of repeated attempts of the worker for this job
 	FinalErrors          int     `json:"final_errors" form:"final_errors" binding:"required,min=0"`                     // Number of final errors of the worker for this job
 	OldestInQueue        int     `json:"oldest_in_queue" form:"oldest_in_queue" binding:"required,min=0"`               // Age of the oldest download in the download queue of the worker
+}
+
+// Clone creates a deep-copy of the calling Metrics
+func (m Metrics) Clone() Metrics {
+	return m
 }
 
 // AverageMetrics calculates the aggregate of multiple metrics snapshots, identifiers that differ between snapshots are set to 0

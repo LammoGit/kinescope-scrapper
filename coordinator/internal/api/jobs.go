@@ -37,7 +37,7 @@ func LoadJobsRouter(router gin.IRouter, app *app.App) {
 		}
 
 		ctx := c.Request.Context()
-		job, err := app.Job.CreateJob(ctx, "", payload)
+		job, err := app.Job.CreateJob(ctx, payload)
 		if err != nil {
 			utility.SendError(c, err)
 			return

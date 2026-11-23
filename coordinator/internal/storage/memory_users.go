@@ -1,33 +1,16 @@
-package repos
+//go:build !postgres
+
+package storage
 
 import (
 	"context"
 	"coordinator/internal/domain"
-	"coordinator/internal/utility"
 	"sort"
 	"sync"
-	"time"
 )
 
 // Won't compile if *UserRepository doesn't implement IUserRepository
-var _ IUserRepository = &UserRepository{}
-
-// Errors
-var (
-	ErrEmailIsTaken        = utility.NewConflictError("user with this email already exists")
-	ErrUserNotFoundByEmail = utility.NewNotFoundError("user with the given email doesn't exist")
-	ErrUserNotFoundByID    = utility.NewNotFoundError("user with the given id doesn't exist")
-)
-
-// IUserRepository interface specifying methods that *UserRepository must implement
-type IUserRepository interface {
-	GetUsers(ctx context.Context) ([]domain.User, error)
-	GetUserByID(ctx context.Context, id int) (domain.User, error)
-	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
-	CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials, role string) (domain.User, error)
-	ReplaceUser(ctx context.Context, user domain.User) error
-	DeleteUserByID(ctx context.Context, id int) error
-}
+var _ domain.IUserRepository = &UserRepository{}
 
 // UserRepository memory storage for User objects
 type UserRepository struct {
@@ -42,6 +25,45 @@ func NewUserRepository() *UserRepository {
 		users:  make(map[int]domain.User),
 		nextID: 1,
 	}
+}
+
+// SaveUser adds new user if id is 0 and updates otherwise.
+func (ur *UserRepository) SaveUser(ctx context.Context, user *domain.User) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	ur.mu.Lock()
+	defer ur.mu.Unlock()
+
+	// Insert
+	if user.ID == 0 {
+		for _, u := range ur.users {
+			if u.Email == user.Email {
+				return ErrEmailIsTaken
+			}
+		}
+
+		user.ID = ur.nextID
+		ur.nextID++
+
+		ur.users[user.ID] = user.Clone()
+		return nil
+	}
+
+	// Update
+	if _, ok := ur.users[user.ID]; !ok {
+		return ErrUserNotFoundByID
+	}
+
+	for _, u := range ur.users {
+		if u.Email == user.Email && u.ID != user.ID {
+			return ErrEmailIsTaken
+		}
+	}
+
+	ur.users[user.ID] = user.Clone()
+	return nil
 }
 
 // GetUsers returns every user, ordered by id
@@ -92,58 +114,6 @@ func (ur *UserRepository) GetUserByEmail(ctx context.Context, email string) (dom
 		}
 	}
 	return domain.User{}, ErrUserNotFoundByEmail
-}
-
-// CreateUser creates a new User object in the repository
-func (ur *UserRepository) CreateUser(ctx context.Context, username string, email string, creds domain.PasswordCredentials, role string) (domain.User, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.User{}, err
-	}
-
-	ur.mu.Lock()
-	defer ur.mu.Unlock()
-
-	// Check that email is unique
-	for _, u := range ur.users {
-		if u.Email == email {
-			return domain.User{}, ErrEmailIsTaken
-		}
-	}
-
-	ur.nextID++
-	user := domain.User{
-		ID:        ur.nextID,
-		Username:  username,
-		Email:     email,
-		Password:  creds,
-		Role:      role,
-		CreatedAt: time.Now(),
-	}
-
-	ur.users[user.ID] = user
-	return user, nil
-}
-
-func (ur *UserRepository) ReplaceUser(ctx context.Context, user domain.User) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	ur.mu.Lock()
-	defer ur.mu.Unlock()
-
-	if _, ok := ur.users[user.ID]; !ok {
-		return ErrUserNotFoundByID
-	}
-
-	for _, u := range ur.users {
-		if u.Email == user.Email && u.ID != user.ID {
-			return ErrEmailIsTaken
-		}
-	}
-
-	ur.users[user.ID] = user
-	return nil
 }
 
 // DeleteUserByID deletes user with the specified id

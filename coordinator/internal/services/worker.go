@@ -38,17 +38,16 @@ func (s *WorkerService) CreateWorker(ctx context.Context, config domain.WorkerCo
 	}
 
 	worker := domain.Worker{
+		ID:        0,
 		Config:    config,
 		Status:    domain.WorkerStatusOff,
 		PublicKey: pubKey,
 	}
 
-	err := s.storage.AddWorker(ctx, worker)
+	err := s.storage.SaveWorker(ctx, &worker)
 	if err != nil {
 		return worker, err
 	}
-	worker.Config.Name = fmt.Sprintf("worker-%d", worker.ID)
-	s.storage.ReplaceWorker(ctx, worker)
 
 	slog.Info("Worker registered", "workerID", worker.ID, "name", worker.Config.Name)
 	s.publish(worker)
@@ -98,7 +97,7 @@ func (s *WorkerService) ReplaceWorkerByID(ctx context.Context, worker domain.Wor
 		return err
 	}
 
-	err := s.storage.ReplaceWorker(ctx, worker)
+	err := s.storage.SaveWorker(ctx, &worker)
 	if err != nil {
 		return err
 	}

@@ -1,24 +1,15 @@
-package repos
+//go:build !postgres
+
+package storage
 
 import (
 	"context"
 	"coordinator/internal/domain"
-	"maps"
-	"slices"
 	"sync"
 )
 
 // Won't compile if *TelemetryRepository doesn't implement ITelemetryRepository
-var _ ITelemetryRepository = &TelemetryRepository{}
-
-// ITelemetryRepository stores and aggregates worker telemetry snapshots
-type ITelemetryRepository interface {
-	AddMetrics(ctx context.Context, metrics domain.Metrics) error
-	GetWorkersMetrics(ctx context.Context) ([]domain.Metrics, error)
-	GetJobsMetrics(ctx context.Context) ([]domain.Metrics, error)
-	GetWorkerMetricsByID(ctx context.Context, id int) (domain.Metrics, error)
-	GetJobMetricsByID(ctx context.Context, id int) (domain.Metrics, error)
-}
+var _ domain.ITelemetryRepository = &TelemetryRepository{}
 
 // TelemetryKey unique key of metrics
 type TelemetryKey struct {
@@ -42,22 +33,33 @@ func NewTelemetryRepository() *TelemetryRepository {
 	}
 }
 
-// AddMetrics appends metrics
-func (tr *TelemetryRepository) AddMetrics(ctx context.Context, metrics domain.Metrics) error {
+// SaveMetrics adds metrics if telemetry key is unique, updates otherwise.
+func (tr *TelemetryRepository) SaveMetrics(ctx context.Context, metrics domain.Metrics) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
+
 	key := TelemetryKey{
 		JobID:    metrics.JobID,
 		RangeID:  metrics.RangeID,
 		WorkerID: metrics.WorkerID,
 	}
-	tr.metrics[key] = metrics
-	tr.jobKeys[metrics.JobID][key] = struct{}{}
-	tr.workerKeys[metrics.WorkerID][key] = struct{}{}
+	tr.metrics[key] = metrics.Clone()
+
+	if jk, ok := tr.jobKeys[metrics.JobID]; ok {
+		jk[key] = struct{}{}
+	} else {
+		tr.jobKeys[metrics.JobID] = map[TelemetryKey]struct{}{key: {}}
+	}
+
+	if wk, ok := tr.workerKeys[metrics.WorkerID]; ok {
+		wk[key] = struct{}{}
+	} else {
+		tr.workerKeys[metrics.WorkerID] = map[TelemetryKey]struct{}{key: {}}
+	}
 
 	return nil
 }
@@ -72,7 +74,9 @@ func (tr *TelemetryRepository) GetWorkersMetrics(ctx context.Context) ([]domain.
 	defer tr.mu.RUnlock()
 
 	var res []domain.Metrics
-	res = slices.AppendSeq(res, maps.Values(tr.metrics))
+	for _, v := range tr.metrics {
+		res = append(res, v.Clone())
+	}
 	return res, nil
 }
 
@@ -88,7 +92,7 @@ func (tr *TelemetryRepository) GetJobsMetrics(ctx context.Context) ([]domain.Met
 	var res []domain.Metrics
 	for _, keys := range tr.jobKeys {
 		for key := range keys {
-			res = append(res, tr.metrics[key])
+			res = append(res, tr.metrics[key].Clone())
 		}
 	}
 	return res, nil
@@ -124,27 +128,6 @@ func (tr *TelemetryRepository) GetJobMetricsByID(ctx context.Context, id int) (d
 	}
 	for key := range keys {
 		metrics = append(metrics, tr.metrics[key])
-	}
-	return domain.AverageMetrics(metrics...), nil
-}
-
-// GetMetricsByWorkerJobID returns aggregated metrics of one job and one worker
-func (tr *TelemetryRepository) GetMetricsByWorkerJobID(ctx context.Context, workerID, jobID int) (domain.Metrics, error) {
-	if err := ctx.Err(); err != nil {
-		return domain.Metrics{}, err
-	}
-
-	var metrics []domain.Metrics
-	keys, ok := tr.jobKeys[jobID]
-	if !ok {
-		return domain.Metrics{}, ErrJobNotFoundByID
-	}
-	for key := range keys {
-		temp := tr.metrics[key]
-		if temp.WorkerID != workerID {
-			continue
-		}
-		metrics = append(metrics, temp)
 	}
 	return domain.AverageMetrics(metrics...), nil
 }
