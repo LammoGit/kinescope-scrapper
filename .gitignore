@@ -7,3 +7,5 @@ AGENTS.md
 dist*
 build*
 node_modules/
+agent/__pycache__
+downloads/
